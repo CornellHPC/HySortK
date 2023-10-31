@@ -58,3 +58,10 @@ void Logger::flush(char const *label)
     upcxx::barrier();
 
 }
+
+std::string Logger::readrangestr(size_t pos, size_t count)
+{
+    std::ostringstream ss;
+    ss << "[" << pos << ".." << (pos+count-1) << "] (" << count << " reads)";
+    return ss.str();
+}

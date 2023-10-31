@@ -15,6 +15,7 @@ public:
     void flush(std::ostringstream& ss);
     void flush(std::ostringstream& ss, int rank);
     std::ostringstream& operator()() { return *logstream; }
+    static std::string readrangestr(size_t pos, size_t count);
 };
 
 #endif

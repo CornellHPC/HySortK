@@ -17,7 +17,10 @@ FLAGS=$(OPT) $(COMPILE_TIME_PARAMETERS) -DTHREADED -Wall -std=c++17 -I./include 
 COMPILER=upcxx
 
 OBJECTS=obj/logger.o \
-		obj/timer.o
+		obj/timer.o \
+		obj/dnaseq.o \
+		obj/dnabuffer.o \
+		obj/fastaindex.o \
 
 
 all: ukmerc
@@ -34,9 +37,12 @@ obj/%.o: src/%.cpp
 	@echo upcxx $(COMPILE_TIME_PARAMETERS) -c -o $@ $<
 	$(COMPILER) $(FLAGS) -c -o $@ $<
 
+obj/main.o: src/main.cpp include/logger.hpp include/timer.hpp include/dnaseq.hpp include/dnabuffer.hpp include/fastaindex.hpp 
 obj/logger.o: src/logger.cpp include/logger.hpp
 obj/timer.o: src/timer.cpp include/timer.hpp
-obj/main.o: src/main.cpp include/logger.hpp include/timer.hpp
+obj/dnaseq.o: src/dnaseq.cpp include/dnaseq.hpp
+obj/dnabuffer.o: src/dnabuffer.cpp include/dnabuffer.hpp include/dnaseq.hpp
+obj/fastaindex.o: src/fastaindex.cpp include/fastaindex.hpp include/dnaseq.hpp include/dnabuffer.hpp
 
 clean:
 	rm -rf *.o obj/* ukmerc $(HOME)/bin/ukmerc
