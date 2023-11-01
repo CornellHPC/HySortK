@@ -21,6 +21,8 @@ OBJECTS=obj/logger.o \
 		obj/dnaseq.o \
 		obj/dnabuffer.o \
 		obj/fastaindex.o \
+		obj/hashfuncs.o \
+		obj/kmer.o
 
 
 all: ukmerc
@@ -37,12 +39,14 @@ obj/%.o: src/%.cpp
 	@echo upcxx $(COMPILE_TIME_PARAMETERS) -c -o $@ $<
 	$(COMPILER) $(FLAGS) -c -o $@ $<
 
-obj/main.o: src/main.cpp include/logger.hpp include/timer.hpp include/dnaseq.hpp include/dnabuffer.hpp include/fastaindex.hpp 
+obj/main.o: src/main.cpp include/logger.hpp include/timer.hpp include/dnaseq.hpp include/dnabuffer.hpp include/fastaindex.hpp include/kmer.hpp include/hashfuncs.hpp include/compiletime.h
 obj/logger.o: src/logger.cpp include/logger.hpp
 obj/timer.o: src/timer.cpp include/timer.hpp
 obj/dnaseq.o: src/dnaseq.cpp include/dnaseq.hpp
 obj/dnabuffer.o: src/dnabuffer.cpp include/dnabuffer.hpp include/dnaseq.hpp
 obj/fastaindex.o: src/fastaindex.cpp include/fastaindex.hpp include/dnaseq.hpp include/dnabuffer.hpp
+obj/hashfuncs.o: src/hashfuncs.cpp include/hashfuncs.hpp
+obj/kmer.o: src/kmer.cpp include/kmer.hpp include/dnaseq.hpp include/hashfuncs.hpp include/compiletime.h
 
 clean:
 	rm -rf *.o obj/* ukmerc $(HOME)/bin/ukmerc
