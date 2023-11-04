@@ -6,9 +6,9 @@
 #include "fastaindex.hpp"
 #include "dnabuffer.hpp"
 #include "dnaseq.hpp"
+#include "kmerops.hpp"
 
 std::string fasta_fname;
-
 
 int main(int argc, char **argv){
     upcxx::init();
@@ -39,6 +39,16 @@ int main(int argc, char **argv){
     ss << "reading and 2-bit encoding " << std::quoted(index.get_fasta_fname()) << " sequences in parallel";
     timer.stop_and_log(ss.str().c_str());
     ss.clear(); ss.str("");
+
+    timer.start();
+    auto bucket = exchange_kmer(mydna);
+    timer.stop_and_log("exchange_kmer");
+
+    timer.start();
+    auto kmerlist = filter_kmer(bucket);
+    timer.stop_and_log("filter_kmer");
+
+    print_kmer_histogram(*kmerlist);
 
     upcxx::finalize();
     return 0;

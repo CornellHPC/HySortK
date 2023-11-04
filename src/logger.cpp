@@ -36,7 +36,7 @@ void Logger::flush(char const *label)
     int myrank = upcxx::rank_me();
     int nprocs = upcxx::rank_n();
 
-    str = logstream->str();
+    str.emplace(logstream->str());
     logstream.reset(new std::ostringstream());
 
     upcxx::barrier();
