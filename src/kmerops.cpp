@@ -52,7 +52,9 @@ upcxx::future<> KmerParserHandler::send(int dst, bool last_send) {
         
         int dst_process = dst / ntasks;
         // std::cout<<"From process:"<<upcxx::rank_me()<<" sending to process:"<<dst_process<< " local taskid:"<< dst % ntasks << " last_send:" << last_send << std::endl;
+        cnt += 1;
 
+        auto time_st = std::chrono::high_resolution_clock::now();
         auto task_done = upcxx::rpc(
             dst_process,
             [](const int& taskid, const size_t& buf_sz, const upcxx::view<uint8_t>& buf_in_rpc, bool last_send) {
@@ -64,6 +66,8 @@ upcxx::future<> KmerParserHandler::send(int dst, bool last_send) {
                 return task_done;   /* returning this future ensures that the lifetime of buffer is extended*/
             },
             dst % ntasks, buf_sz[dst], upcxx::make_view(&sendbufs[dst][0], &sendbufs[dst][buf_sz[dst]]), last_send);
+        auto time_ed = std::chrono::high_resolution_clock::now();
+        time_tot += std::chrono::duration_cast<std::chrono::duration<double>>(time_ed - time_st).count();
 
         buf_sz[dst] = 0;
         return task_done;
@@ -162,12 +166,19 @@ exchange_kmer(const DnaBuffer& myreads,
 
         recv_threads.emplace_back(std::thread([](int expected_done, upcxx::persona& persona, int i){
 
+            auto start_time = std::chrono::high_resolution_clock::now();
+
             upcxx::persona_scope scope(persona);
             while(expected_done != done_cnt)    /* done_cnt is a thread local var */
                 upcxx::progress();
 
             g_recv_done[i] = true;
             upcxx::discharge();
+
+            auto end_time = std::chrono::high_resolution_clock::now();
+            double elapsed = std::chrono::duration_cast<std::chrono::duration<double>>(end_time - start_time).count();
+            std::cout<<"Finished! Recv thr no:"<<i<< " time elapsed: "<<elapsed<< std::endl;
+
 
         }, expected_done, std::ref(personas[i]), i));
     }
@@ -181,6 +192,8 @@ exchange_kmer(const DnaBuffer& myreads,
 
         send_threads.emplace_back(std::thread([&](size_t st, size_t ed, int i, const DnaBuffer& myreads){
 
+            auto start_time = std::chrono::high_resolution_clock::now();
+
             KmerParserHandler handler(ntasks, nprocs, BATCH_SIZE, readoffset);
             ForeachKmer(myreads, handler, st, ed);
             handler.wait();
@@ -188,6 +201,12 @@ exchange_kmer(const DnaBuffer& myreads,
             // std::cout<<"Finished! Send thr no:"<<i<< " process rank: "<<myrank<< std::endl;
             g_send_done[i] = true;
             upcxx::discharge();
+
+            auto end_time = std::chrono::high_resolution_clock::now();
+            double elapsed = std::chrono::duration_cast<std::chrono::duration<double>>(end_time - start_time).count();
+            std::cout<<"Finished! Send thr no:"<<i<< " time elapsed: "<<elapsed<< std::endl;
+
+            handler.data();
 
         }, st, ed, i, std::ref(myreads)));
 

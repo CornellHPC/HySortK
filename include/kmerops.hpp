@@ -78,6 +78,9 @@ class KmerParserHandler
     std::vector<std::vector<uint8_t>> sendbufs;
     std::vector<size_t> buf_sz;
     upcxx::future<> futures;
+
+    int cnt;
+    double time_tot;
     
     void encode(std::vector<uint8_t>& t, const TKmer& kmer, PosInRead posinread, ReadId readid, size_t& buf_sz);
     upcxx::future<> send(int dst, bool last_send = false);
@@ -97,6 +100,10 @@ public:
     /* send all the remaining in the buffer and wait for all sends to complete */
     void wait();
     void operator()(const TKmer& kmer, size_t kid, size_t rid);
+    void data() {
+        std::cout << "total send count: " << cnt << std::endl;
+        std::cout << "avg time for calling rpc" << time_tot / cnt<< std::endl;
+    }
 };
 
 template <typename KmerHandler>
