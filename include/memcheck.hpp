@@ -1,14 +1,14 @@
-#include <sys/sysinfo.h>
+# ifndef MEMCHECK_HPP
+# define MEMCHECK_HPP
+
+#include <mpi.h>
+#include <memory.h>
+#include <cstdio>
 #include <iostream>
+#include <string>
 
-void mem_check(){
-    struct sysinfo info;
-    sysinfo(&info);
-    long long total_ram = info.totalram * info.mem_unit;
-    long long free_ram = info.freeram * info.mem_unit;
-    long long available_ram = info.totalram * info.mem_unit;
+int get_cluster_memory_usage_kb(long* vmrss_per_process, long* vmsize_per_process, int root, int np);
+int get_global_memory_usage_kb(long* global_vmrss, long* global_vmsize, int np);
+void print_mem_log(int nprocs, int myrank, std::string msg=std::string());
 
-    std::cout << "Total RAM: " << total_ram / (1024 * 1024) << " MB" << std::endl;
-    std::cout << "Free RAM: " << free_ram / (1024 * 1024) << " MB" << std::endl;
-    std::cout << "Available RAM: " << available_ram / (1024 * 1024) << " MB" << std::endl;
-}
+# endif

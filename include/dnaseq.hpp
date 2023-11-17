@@ -6,7 +6,6 @@
 #include <string>
 #include <vector>
 #include <iostream>
-#include <upcxx/upcxx.hpp>
 
 /*
  * Originally I wanted this class to be able to be used under two different

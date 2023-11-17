@@ -8,7 +8,6 @@
 #include <cstdint>
 #include <cstddef>
 #include <string>
-#include <upcxx/upcxx.hpp>
 
 class DnaBuffer
 {

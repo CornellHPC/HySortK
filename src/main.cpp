@@ -1,5 +1,5 @@
 #include<iostream>
-#include<upcxx/upcxx.hpp>
+#include<mpi.h>
 
 #include "logger.hpp"
 #include "timer.hpp"
@@ -11,10 +11,10 @@
 std::string fasta_fname;
 
 int main(int argc, char **argv){
-    upcxx::init();
+    MPI_Init(&argc, &argv);
 
-    Logger log;
-    Timer timer;
+    Logger log(MPI_COMM_WORLD);
+    Timer timer(MPI_COMM_WORLD);
     std::ostringstream ss;
 
     if (argc < 2){
@@ -24,8 +24,11 @@ int main(int argc, char **argv){
 
     fasta_fname = argv[1];
 
+    log() << "fasta file: " << std::quoted(fasta_fname);
+    log.flush("Init");
+
     timer.start();
-    FastaIndex index(fasta_fname);
+    FastaIndex index(fasta_fname, MPI_COMM_WORLD);
     ss << "reading " << std::quoted(index.get_faidx_fname()) << " and scattering to all MPI tasks";
     timer.stop_and_log(ss.str().c_str());
     ss.clear(); ss.str("");
@@ -41,15 +44,15 @@ int main(int argc, char **argv){
     ss.clear(); ss.str("");
 
     timer.start();
-    auto bucket = exchange_kmer(mydna);
+    auto bucket = exchange_kmer(mydna, MPI_COMM_WORLD);
     timer.stop_and_log("exchange_kmer");
 
     timer.start();
     auto kmerlist = filter_kmer(bucket);
     timer.stop_and_log("filter_kmer");
 
-    print_kmer_histogram(*kmerlist);
+    print_kmer_histogram(*kmerlist, MPI_COMM_WORLD);
 
-    upcxx::finalize();
+    MPI_Finalize();
     return 0;
 }

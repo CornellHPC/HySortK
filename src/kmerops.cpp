@@ -4,258 +4,203 @@
 #include "timer.hpp"
 #include "paradissort.hpp"
 #include "memcheck.hpp"
+#include "compiletime.h"
 #include <cstring>
 #include <numeric>
 #include <algorithm>
 #include <iomanip>
 #include <cmath>
 #include <omp.h>
-#include <upcxx/upcxx.hpp>
+#include <mpi.h>
 #include <thread>
-
-std::vector<upcxx::persona>* g_personas;
-KmerSeedBuckets* g_bucket;
-thread_local int done_cnt = 0;
-std::atomic<bool> g_send_done[THREADCNT_SEND];
-std::atomic<bool> g_recv_done[THREADCNT_RECV];
-
-
-void store_into_local(const int& tid, const size_t& buf_sz, const upcxx::view<uint8_t>& buf_in_rpc, const bool last_send){
-    const uint8_t* addr = buf_in_rpc.data();
-    const uint8_t* end = addr + buf_sz;
-
-    // std::cout<<"Storing into "<< tid << " with size " << buf_sz << " last_send? "<<last_send << std::endl;
-    
-    while(addr < end){
-        TKmer kmer((void*)addr);                
-        ReadId readid = *((ReadId*)(addr + TKmer::NBYTES));
-        PosInRead pos = *((PosInRead*)(addr + TKmer::NBYTES + sizeof(ReadId)));
-        (*g_bucket)[tid].emplace_back(kmer, readid, pos);
-        addr += TKmer::NBYTES + sizeof(ReadId) + sizeof(PosInRead);
-    }
-
-    if (last_send){
-        done_cnt++;
-    }
-}
-
-void KmerParserHandler::encode(std::vector<uint8_t>& t, const TKmer& kmer, PosInRead posinread, ReadId readid, size_t& buf_sz) {
-
-    uint8_t* addr = &t[buf_sz];
-    memcpy(addr, kmer.GetBytes(), TKmer::NBYTES);
-    memcpy(addr + TKmer::NBYTES, &readid, sizeof(ReadId));
-    memcpy(addr + TKmer::NBYTES + sizeof(ReadId), &posinread, sizeof(PosInRead));
-    buf_sz += (sizeof(TKmer) + sizeof(ReadId) + sizeof(PosInRead));
-
-}
-
-upcxx::future<> KmerParserHandler::send(int dst, bool last_send) {
-        
-        int dst_process = dst / ntasks;
-        // std::cout<<"From process:"<<upcxx::rank_me()<<" sending to process:"<<dst_process<< " local taskid:"<< dst % ntasks << " last_send:" << last_send << std::endl;
-        cnt += 1;
-
-        auto time_st = std::chrono::high_resolution_clock::now();
-        auto task_done = upcxx::rpc(
-            dst_process,
-            [](const int& taskid, const size_t& buf_sz, const upcxx::view<uint8_t>& buf_in_rpc, bool last_send) {
-                upcxx::persona& persona = (*g_personas)[taskid % THREADCNT_RECV];
-
-                auto task_done = persona.lpc([taskid, buf_sz, &buf_in_rpc, last_send](){
-                    store_into_local(taskid, buf_sz, buf_in_rpc, last_send);
-                });
-                return task_done;   /* returning this future ensures that the lifetime of buffer is extended*/
-            },
-            dst % ntasks, buf_sz[dst], upcxx::make_view(&sendbufs[dst][0], &sendbufs[dst][buf_sz[dst]]), last_send);
-        auto time_ed = std::chrono::high_resolution_clock::now();
-        time_tot += std::chrono::duration_cast<std::chrono::duration<double>>(time_ed - time_st).count();
-
-        buf_sz[dst] = 0;
-        return task_done;
-}
-
-void KmerParserHandler::wait() {
-    for (int dst = 0; dst < nprocs * ntasks; dst++) {
-        futures = upcxx::when_all(futures, send(dst, true));
-    }
-    futures.wait();
-}
-
-
-void KmerParserHandler::operator()(const TKmer& kmer, size_t kid, size_t rid) {
-    int dst = GetKmerOwner(kmer, nprocs * ntasks);
-    encode(sendbufs[dst], kmer, static_cast<PosInRead>(kid), static_cast<ReadId>(rid) + readoffset, buf_sz[dst]);
-
-    if (buf_sz[dst] >= batch_sz) {
-        futures = when_all(futures, send(dst));
-    }
-}
 
 std::unique_ptr<KmerSeedBuckets>
 exchange_kmer(const DnaBuffer& myreads,
-     int thr_per_task)
+     MPI_Comm comm,
+     int thr_per_task,
+     int max_thr_membounded)
 {
 
     #if LOG_LEVEL >= 3
-    Timer timer();
+    MPITimer timer(comm);
     #endif
 
-    int myrank = upcxx::rank_me();
-    int nprocs = upcxx::rank_n();
+    int myrank;
+    int nprocs;
+    MPI_Comm_rank(comm, &myrank);
+    MPI_Comm_size(comm, &nprocs);
     bool single_node = (nprocs == 1);
 
-
-    Logger logger;
+    Logger logger(comm);
     std::ostringstream rootlog;
 
     /* parallel settings */
-    
+    omp_set_nested(1);
     int ntasks = omp_get_max_threads() / thr_per_task;
     if (ntasks < 1) {
         ntasks = 1;
         thr_per_task = omp_get_max_threads();
     }
-    
-    int nthr_send = THREADCNT_SEND;
-    int nthr_recv = std::min(THREADCNT_RECV, ntasks);
-
-    if (ntasks % nthr_recv != 0) {
-        if (myrank==0){
-            logger() << "Warning: ntasks is not divisible by nthr_recv. work may be imbalanced.";
-            logger.flush(0);
-        }
-    }
-
-
-    logger() << "ntasks: " << ntasks << " nthr_send: " << nthr_send << " nthr_recv: " << nthr_recv;
-    logger.flush("Thread Info");
-
+    /* for memory bounded operations in this stage, we use another number of threads */
+    int nthr_membounded = std::min(omp_get_max_threads() , max_thr_membounded);
 
     size_t numreads = myreads.size();     /* Number of locally stored reads */
+    // !! There may be a bug with large file and small rank num. in this case myread can read things wrong, resulting in 
+    // !! Kmers with all A and C.
+
+    #if LOG_LEVEL >= 2
+    logger() << ntasks << " \t (thread per task: " << thr_per_task << ")";
+    logger.flush("Task num:");
+    logger() << nthr_membounded ;
+    logger.flush("Thread count used for memory bounded operations:");
+    #endif
 
     #if LOG_LEVEL >= 3
     timer.start();
     #endif
 
-    size_t readoffset = 0;
-    
-    upcxx::dist_object<size_t> readoffset_dist(numreads);
-    for(int i = 0; i < myrank; i++)
-        readoffset += readoffset_dist.fetch(i).wait();
-    upcxx::barrier();
+    size_t readoffset = numreads;         // yfli: not sure if we need this initial value
+    if (!single_node)
+        MPI_Exscan(&numreads, &readoffset, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, comm);
+    if (!myrank) readoffset = 0;    
 
-    std::vector<upcxx::persona> personas(nthr_recv);
-
-    std::vector<std::thread> send_threads;
-    std::vector<std::thread> recv_threads;
-
-    g_personas = &personas;
-    KmerSeedBuckets* bucket = new KmerSeedBuckets(ntasks);
-    for (int i = 0; i < ntasks; i++ ) {
-        (*bucket)[i].reserve((size_t)(1.1 * numreads * KMER_SIZE / ntasks));
-    }
-    g_bucket = bucket;
-
-    upcxx::barrier();
-
-    /* launch the receiving threads first */
-    for (int i = 0; i < nthr_recv; i++ ){
-        g_recv_done[i] = false;
-        int my_taskcnt = ntasks / nthr_recv;
-        if (i < ntasks % nthr_recv) my_taskcnt++;
-        int expected_done = my_taskcnt * nprocs * nthr_send; 
-
-        logger() <<"Launching recv thread "<< i << " with expected done "<< expected_done << std::endl;
-        logger.flush("Launching recv threads");
-
-        recv_threads.emplace_back(std::thread([](int expected_done, upcxx::persona& persona, int i){
-
-            auto start_time = std::chrono::high_resolution_clock::now();
-
-            upcxx::persona_scope scope(persona);
-            while(expected_done != done_cnt)    /* done_cnt is a thread local var */
-                upcxx::progress();
-
-            g_recv_done[i] = true;
-            upcxx::discharge();
-
-            auto end_time = std::chrono::high_resolution_clock::now();
-            double elapsed = std::chrono::duration_cast<std::chrono::duration<double>>(end_time - start_time).count();
-            std::cout<<"Finished! Recv thr no:"<<i<< " time elapsed: "<<elapsed<< std::endl;
-
-
-        }, expected_done, std::ref(personas[i]), i));
+    /* prepare the vars for each task */
+    KmerSeedVecs kmerseeds_vecs;    
+    for (int i = 0; i < nthr_membounded; i++ ) {
+        kmerseeds_vecs.push_back(std::vector<std::vector<KmerSeedStruct>>(nprocs * ntasks));
     }
 
-
-    for (int i = 0; i < nthr_send; i++ ){
-        g_send_done[i] = false;
-        size_t st = numreads / nthr_send * i;
-        size_t ed = numreads / nthr_send * (i + 1);
-        if (i == nthr_send - 1) ed = numreads;
-
-        send_threads.emplace_back(std::thread([&](size_t st, size_t ed, int i, const DnaBuffer& myreads){
-
-            auto start_time = std::chrono::high_resolution_clock::now();
-
-            KmerParserHandler handler(ntasks, nprocs, BATCH_SIZE, readoffset);
-            ForeachKmer(myreads, handler, st, ed);
-            handler.wait();
-
-            // std::cout<<"Finished! Send thr no:"<<i<< " process rank: "<<myrank<< std::endl;
-            g_send_done[i] = true;
-            upcxx::discharge();
-
-            auto end_time = std::chrono::high_resolution_clock::now();
-            double elapsed = std::chrono::duration_cast<std::chrono::duration<double>>(end_time - start_time).count();
-            std::cout<<"Finished! Send thr no:"<<i<< " time elapsed: "<<elapsed<< std::endl;
-
-            handler.data();
-
-        }, st, ed, i, std::ref(myreads)));
-
+    std::vector<KmerParserHandler> parser_vecs;
+    for (int i = 0; i < nthr_membounded; i++ ) {
+        /* This is a little bit tricky, as we need to avoid the kmerseeds_vecs from reallocating */
+        parser_vecs.push_back(KmerParserHandler(kmerseeds_vecs[i], static_cast<ReadId>(readoffset)));
     }
 
-    while (true) {
-        upcxx::progress();
-
-        bool all_done = true;
-        for (int i = 0; i < nthr_send; i++) {
-            if (g_send_done[i] == false) {
-                all_done = false;
-                break;
-            }
-        }
-        for(int i = 0; i < nthr_recv; i++) {
-            if (g_recv_done[i] == false) {
-                all_done = false;
-                break;
-            }
-        }
-
-        if (all_done == true) {
-            for (int i = 0; i < nthr_send; i++) {
-                send_threads[i].join();
-            }
-            for (int i = 0; i < nthr_recv; i++) {
-                recv_threads[i].join();
-            }
-            break;
+    #pragma omp parallel for num_threads(nthr_membounded)
+    for (int i = 0; i < nthr_membounded; i++) {
+        for(int j = 0; j < nprocs * ntasks; j++) {
+            kmerseeds_vecs[i][j].reserve(size_t(1.1 * numreads / nprocs / ntasks / nthr_membounded));
         }
     }
 
+    ForeachKmerParallel(myreads, parser_vecs, nthr_membounded);
 
-    return std::unique_ptr<KmerSeedBuckets>(bucket);
+    #if LOG_LEVEL >= 3
+    timer.stop_and_log("K-mer partitioning");
+    print_mem_log(nprocs, myrank, "After partitioning");
+    timer.start();
+    #endif
+
+    KmerSeedBuckets* recv_kmerseeds = new KmerSeedBuckets(ntasks);
+
+    if (nprocs == 1){
+
+        #if LOG_LEVEL >= 3
+        timer.start();
+        #endif
+
+        #pragma omp parallel for num_threads(nthr_membounded)
+        for (int j = 0; j < nprocs * ntasks; j++) {
+            for (int i = 0; i < nthr_membounded; i++) {
+                (*recv_kmerseeds)[j].insert((*recv_kmerseeds)[j].end(), kmerseeds_vecs[i][j].begin(), kmerseeds_vecs[i][j].end());
+            }
+        }
+        
+
+        #if LOG_LEVEL >= 3
+        timer.stop_and_log("Local K-mer format conversion (nprocs == 1) ");
+        #endif
+
+        /* for 1 process, no MPI communication is necessary*/
+        return std::unique_ptr<KmerSeedBuckets>(recv_kmerseeds);
+    } 
+
+    /* more than 1 process, need MPI communication */
+
+    std::vector<uint64_t> task_seedcnt(ntasks);                                 /* number of kmer seeds for each local task in total */
+    std::vector<uint64_t> sthrcnt(nprocs * ntasks), rthrcnt(nprocs * ntasks);   /* number of kmer seeds for each global task (sending/reciving) */
+    uint64_t batch_sz = std::numeric_limits<MPI_Count_t>::max() / nprocs;      
+    batch_sz = std::min(batch_sz, (uint64_t)MAX_SEND_BATCH);
+
+    constexpr size_t seedbytes = TKmer::NBYTES + sizeof(ReadId) + sizeof(PosInRead);
+
+    #if LOG_LEVEL >= 2
+    logger() << std::setprecision(4) << "sending 'row' k-mers to each processor in this amount : {";
+    #endif
+
+    for (int i = 0; i < nprocs; ++i)
+    {
+        for (int j = 0; j < ntasks; j++) 
+        {
+            for (int k = 0; k < nthr_membounded; k++)
+            {
+                sthrcnt[i * ntasks + j] += kmerseeds_vecs[k][i * ntasks + j].size();
+            }
+
+            #if LOG_LEVEL >= 2
+            logger() << sthrcnt[i * ntasks + j]  << "+";
+            #endif
+        }
+
+        #if LOG_LEVEL >= 2
+        logger() << ", ";
+        #endif
+    }
+
+    #if LOG_LEVEL >= 2
+    logger() << "}";
+    logger.flush("K-mer exchange sendcounts:");
+    #endif
+
+    /* calculate the offset for each task */
+    MPI_Alltoall(sthrcnt.data(), ntasks, MPI_UNSIGNED_LONG_LONG, rthrcnt.data(), ntasks, MPI_UNSIGNED_LONG_LONG, comm);
+
+    /* calculate how many kmer seeds each thread will receive */
+    size_t numkmerseeds = std::accumulate(rthrcnt.begin(), rthrcnt.end(), (uint64_t)0);
+
+    for (int i = 0; i < ntasks; i++) {
+        for (int j = 0; j < nprocs; j++) {
+            task_seedcnt[i] += rthrcnt[j * ntasks + i];
+        }
+    }
+    assert(numkmerseeds == std::accumulate(task_seedcnt.begin(), task_seedcnt.end(), (uint64_t)0));
+
+    for (int i = 0; i < ntasks; i++) {
+        (*recv_kmerseeds)[i].reserve(task_seedcnt[i]);
+    }
+
+    /* Sending in batches using Alltoall instead of Alltoallv */
+    BatchSender bsender(comm, ntasks, nthr_membounded, batch_sz, kmerseeds_vecs);
+    BatchStorer bstorer(*recv_kmerseeds, ntasks, nprocs, rthrcnt.data(), batch_sz);
+
+    bsender.init();
+    int round = 0;
+
+    while(bsender.get_status() != BatchSender::Status::BATCH_DONE) {
+        round += 1;
+
+        uint8_t* recvbuf = bsender.progress();
+        assert(recvbuf != nullptr);
+        bstorer.store(recvbuf);
+    }
+
+    #if LOG_LEVEL >= 3
+    std::ostringstream ss;
+    ss << "K-mer exchange and storing (rounds: " << round << ", batch size: " << batch_sz << ")";
+    timer.stop_and_log(ss.str().c_str());
+    ss.clear();
+    print_mem_log(nprocs, myrank, "After storing (not deleting buffers)");
+    bsender.print_results(logger);
+    #endif
+
+    return std::unique_ptr<KmerSeedBuckets>(recv_kmerseeds);
 }
-
 
 std::unique_ptr<KmerList>
 filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, int thr_per_task)
 {
-    int myrank = upcxx::rank_me();
-    int nprocs = upcxx::rank_n();
 
-    Logger logger;
+    Logger logger(MPI_COMM_WORLD);
     std::ostringstream rootlog;
 
     int ntasks = omp_get_max_threads() / thr_per_task;
@@ -400,16 +345,15 @@ int GetKmerOwner(const TKmer& kmer, int nprocs) {
     return static_cast<int>(owner);
 }
 
-void print_kmer_histogram(const KmerList& kmerlist) {
+void print_kmer_histogram(const KmerList& kmerlist, MPI_Comm comm) {
     #if LOG_LEVEL >= 2
 
-    Logger logger;
+    Logger logger(comm);
     int maxcount = std::accumulate(kmerlist.cbegin(), kmerlist.cend(), 0, [](int cur, const auto& entry) { return std::max(cur, std::get<3>(entry)); });
 
-    maxcount = upcxx::reduce_all(maxcount, upcxx::op_fast_max).wait();
+    MPI_Allreduce(MPI_IN_PLACE, &maxcount, 1, MPI_INT, MPI_MAX, comm);
 
     std::vector<int> histo(maxcount+1, 0);
-    std::vector<int> g_histo(maxcount+1, 0);
 
     for(size_t i = 0; i < kmerlist.size(); ++i)
     {
@@ -418,24 +362,25 @@ void print_kmer_histogram(const KmerList& kmerlist) {
         histo[cnt]++;
     }
 
-    upcxx::reduce_all(histo.data(), g_histo.data(), maxcount+1, upcxx::op_fast_add).wait();
+    MPI_Allreduce(MPI_IN_PLACE, histo.data(), maxcount+1, MPI_INT, MPI_SUM, comm);
 
-    int myrank = upcxx::rank_me();
+    int myrank;
+    MPI_Comm_rank(comm, &myrank);
 
     if (!myrank)
     {
         std::cout << "#count\tnumkmers" << std::endl;
 
-        for (int i = 1; i < g_histo.size(); ++i)
+        for (int i = 1; i < histo.size(); ++i)
         {
-            if (g_histo[i] > 0)
+            if (histo[i] > 0)
             {
-                std::cout << i << "\t" << g_histo[i] << std::endl;
+                std::cout << i << "\t" << histo[i] << std::endl;
             }
         }
         std::cout << std::endl;
     }
 
-    upcxx::barrier();
+    MPI_Barrier(comm);
     #endif
 }

@@ -21,4 +21,7 @@ static_assert(0 < SMER_SIZE && SMER_SIZE <= KMER_SIZE);
 static_assert(0 < LOWER_KMER_FREQ && LOWER_KMER_FREQ <= UPPER_KMER_FREQ && UPPER_KMER_FREQ <= std::numeric_limits<uint16_t>::max());
 #endif
 
+typedef int32_t MPI_Count_t;
+typedef int32_t MPI_Offset_t;
+
 #endif

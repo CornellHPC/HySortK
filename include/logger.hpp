@@ -1,20 +1,29 @@
 #ifndef LOGGER_H_
 #define LOGGER_H_
 
-#include <upcxx/upcxx.hpp>
+#include <mpi.h>
 #include <iostream>
+#include <sstream>
+#include <memory>
+#include <vector>
 
-class Logger {
+
+class Logger
+{
     std::unique_ptr<std::ostringstream> logstream, rootstream;
-    upcxx::dist_object<std::string> str;
     int myrank, nprocs;
+    MPI_Comm comm;
+
+    std::string prefix();
 
 public:
-    Logger();
+    Logger(MPI_Comm comm);
     void flush(char const *label);
     void flush(std::ostringstream& ss);
     void flush(std::ostringstream& ss, int rank);
     std::ostringstream& operator()() { return *logstream; }
+    std::string rankstr();
+    std::string rankstr(int proc);
     static std::string readrangestr(size_t pos, size_t count);
 };
 
