@@ -31,6 +31,7 @@ int main(int argc, char **argv){
     FastaIndex index(fasta_fname, MPI_COMM_WORLD);
     ss << "reading " << std::quoted(index.get_faidx_fname()) << " and scattering to all MPI tasks";
     timer.stop_and_log(ss.str().c_str());
+
     ss.clear(); ss.str("");
 
     /*

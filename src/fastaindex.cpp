@@ -104,6 +104,9 @@ FastaIndex::FastaIndex(const std::string& fasta_fname, MPI_Comm comm) :  fasta_f
     MPI_Comm_rank(comm, &myrank);
     readcounts.resize(nprocs);
 
+    std::cout<<"000"<<std::endl;
+
+
     /*
      * Root processor responsible for reading and parsing FASTA
      * index file "{fasta_fname}.fai" into one record per sequence.
@@ -130,7 +133,7 @@ FastaIndex::FastaIndex(const std::string& fasta_fname, MPI_Comm comm) :  fasta_f
     /*
      * All processors get a copy of the read counts.
      */
-    MPI_Bcast(readcounts.data(), nprocs, MPI_COUNT, 0, comm);
+    MPI_Bcast(readcounts.data(), nprocs, MPI_COUNT_TYPE, 0, comm);
 
     /*
      * And the read displacements.
@@ -142,8 +145,8 @@ FastaIndex::FastaIndex(const std::string& fasta_fname, MPI_Comm comm) :  fasta_f
      * It is useful for the displacements to store the total number
      * of reads in the last position.
      */
-    std::cout<<"Counts:"<<readcounts.back()<<std::endl;
-    std::cout<<"Displacements:"<<readdispls.back()<<std::endl;
+    // std::cout<<"Counts:"<<readcounts.back()<<std::endl;
+    // std::cout<<"Displacements:"<<readdispls.back()<<std::endl;
 
     readdispls.push_back(readdispls.back() + readcounts.back());
 
@@ -172,6 +175,7 @@ FastaIndex::FastaIndex(const std::string& fasta_fname, MPI_Comm comm) :  fasta_f
     MPI_Scatterv(rootrecords.data(), readcounts.data(), readdispls.data(), faidx_dtype_t, myrecords.data(), readcounts[myrank], faidx_dtype_t, 0, comm);
 
     MPI_Type_free(&faidx_dtype_t);
+
 
     #if LOG_LEVEL >= 2
     Logger logger(comm);

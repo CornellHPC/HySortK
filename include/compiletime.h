@@ -23,5 +23,6 @@ static_assert(0 < LOWER_KMER_FREQ && LOWER_KMER_FREQ <= UPPER_KMER_FREQ && UPPER
 
 typedef int32_t MPI_Count_t;
 typedef int32_t MPI_Offset_t;
+#define MPI_COUNT_TYPE MPI_INT
 
 #endif

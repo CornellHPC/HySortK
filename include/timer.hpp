@@ -33,9 +33,9 @@ struct Timer
     void log(char const *label)
     {
         double maxtime, proctime;
+
         MPI_Reduce(&elapsed, &maxtime, 1, MPI_DOUBLE, MPI_MAX, 0, comm);
         MPI_Reduce(&elapsed, &proctime, 1, MPI_DOUBLE, MPI_SUM, 0, comm);
-
         if (isroot)
         {
             std::cout << label << ":\n";

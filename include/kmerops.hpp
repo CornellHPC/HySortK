@@ -190,7 +190,7 @@ private:
         size_t idx = loc_idx[procid];
 
         std::vector<KmerSeedStruct> &v = kmerseeds[thr][procid * ntasks + task];
-        std::cout<<kmerseeds[thr].size()<<" "<<procid * ntasks + task<<std::endl;
+        // std::cout<<kmerseeds[thr].size()<<" "<<procid * ntasks + task<<std::endl;
 
         if (task >= ntasks) return true;    // all data has been sent. is there a bug in the original version?
 

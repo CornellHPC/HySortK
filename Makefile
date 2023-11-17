@@ -32,7 +32,7 @@ install: ukmerc
 
 ukmerc: obj/main.o $(OBJECTS)
 	@echo $(COMPILER) $(FLAGS) -c -o $@ $^
-	$(COMPILER) $(FLAGS) -o $@ $^
+	$(COMPILER) $(FLAGS) -o $@ $^ -lz
 
 obj/%.o: src/%.cpp
 	@mkdir -p $(@D)
