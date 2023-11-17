@@ -46,7 +46,7 @@ obj/dnaseq.o: src/dnaseq.cpp include/dnaseq.hpp
 obj/dnabuffer.o: src/dnabuffer.cpp include/dnabuffer.hpp include/dnaseq.hpp
 obj/fastaindex.o: src/fastaindex.cpp include/fastaindex.hpp include/dnaseq.hpp include/dnabuffer.hpp
 obj/hashfuncs.o: src/hashfuncs.cpp include/hashfuncs.hpp
-obj/kmerops.o: src/kmerops.cpp include/kmerops.hpp include/kmer.hpp include/dnaseq.hpp include/logger.hpp include/timer.hpp include/dnabuffer.hpp include/paradissort.hpp
+obj/kmerops.o: src/kmerops.cpp include/kmerops.hpp include/kmer.hpp include/dnaseq.hpp include/logger.hpp include/timer.hpp include/dnabuffer.hpp include/paradissort.hpp include/memcheck.hpp
 
 clean:
 	rm -rf *.o obj/* ukmerc $(HOME)/bin/ukmerc

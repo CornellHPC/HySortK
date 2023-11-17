@@ -3,6 +3,7 @@
 #include "dnaseq.hpp"
 #include "timer.hpp"
 #include "paradissort.hpp"
+#include "memcheck.hpp"
 #include <cstring>
 #include <numeric>
 #include <algorithm>
@@ -103,6 +104,7 @@ exchange_kmer(const DnaBuffer& myreads,
     int nprocs = upcxx::rank_n();
     bool single_node = (nprocs == 1);
 
+
     Logger logger;
     std::ostringstream rootlog;
 
@@ -149,7 +151,9 @@ exchange_kmer(const DnaBuffer& myreads,
 
     g_personas = &personas;
     KmerSeedBuckets* bucket = new KmerSeedBuckets(ntasks);
-    // maybe reserve space for the bucket will help
+    for (int i = 0; i < ntasks; i++ ) {
+        (*bucket)[i].reserve((size_t)(1.1 * numreads * KMER_SIZE / ntasks));
+    }
     g_bucket = bucket;
 
     upcxx::barrier();
@@ -239,6 +243,7 @@ exchange_kmer(const DnaBuffer& myreads,
             break;
         }
     }
+
 
     return std::unique_ptr<KmerSeedBuckets>(bucket);
 }

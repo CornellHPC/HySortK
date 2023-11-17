@@ -76,14 +76,17 @@ void FastaIndex::getpartition(std::vector<uint64_t>& sendcounts)
          * Keep going through reads until the next one puts us over
          * the average bases per processor.
          */
-        while (readid < numreads && basessofar + rootrecords[readid].len < avgbasesperproc)
+        do
         {
             basessofar += rootrecords[readid].len;
             readid++;
-        }
+        } while (readid < numreads && basessofar + rootrecords[readid].len < avgbasesperproc);
+
+
 
         size_t readssofar = readid - startid;
         assert(readssofar >= 1); /* TODO: come up with a recovery strategy here */
+        assert(readid <= numreads); /* TODO: come up with a recovery strategy here */
 
         sendcounts[i] = readssofar;
     }
