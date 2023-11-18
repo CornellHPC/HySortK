@@ -122,7 +122,7 @@ exchange_kmer(const DnaBuffer& myreads,
     uint64_t batch_sz = std::numeric_limits<MPI_Count_t>::max() / nprocs;      
     batch_sz = std::min(batch_sz, (uint64_t)MAX_SEND_BATCH);
 
-    constexpr size_t seedbytes = TKmer::NBYTES + sizeof(ReadId) + sizeof(PosInRead);
+    constexpr size_t seedbytes = TKmer::NBYTES;
 
     #if LOG_LEVEL >= 2
     logger() << std::setprecision(4) << "sending 'row' k-mers to each processor in this amount : {";
@@ -263,17 +263,10 @@ filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, int thr_per_task)
                     KmerListEntry& entry    = kmerlists[tid].back();
 
                     TKmer& kmer             = std::get<0>(entry);
-                    READIDS& readids        = std::get<1>(entry);
-                    POSITIONS& positions    = std::get<2>(entry);
-                    int& count              = std::get<3>(entry);
+                    int& count              = std::get<1>(entry);
 
                     count = cur_kmer_cnt;
                     kmer = last_mer;
-
-                    for (size_t j = idx - count; j < idx; j++) {
-                        readids[j - idx + count] = (*recv_kmerseeds)[tid][j].readid;
-                        positions[j - idx + count] = (*recv_kmerseeds)[tid][j].posinread;
-                    }
 
                     valid_kmer[tid]++;
                 }
@@ -289,17 +282,11 @@ filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, int thr_per_task)
             KmerListEntry& entry         = kmerlists[tid].back();
 
             TKmer& kmer             = std::get<0>(entry);
-            READIDS& readids        = std::get<1>(entry);
-            POSITIONS& positions    = std::get<2>(entry);
-            int& count              = std::get<3>(entry);
+            int& count              = std::get<1>(entry);
 
             count = cur_kmer_cnt;
             kmer = last_mer;
 
-            for (size_t j = task_seedcnt[tid] - count; j < task_seedcnt[tid]; j++) {
-                readids[j - task_seedcnt[tid] + count] = (*recv_kmerseeds)[tid][j].readid;
-                positions[j - task_seedcnt[tid] + count] = (*recv_kmerseeds)[tid][j].posinread;
-            }
 
             valid_kmer[tid]++;
         }
@@ -349,7 +336,7 @@ void print_kmer_histogram(const KmerList& kmerlist, MPI_Comm comm) {
     #if LOG_LEVEL >= 2
 
     Logger logger(comm);
-    int maxcount = std::accumulate(kmerlist.cbegin(), kmerlist.cend(), 0, [](int cur, const auto& entry) { return std::max(cur, std::get<3>(entry)); });
+    int maxcount = std::accumulate(kmerlist.cbegin(), kmerlist.cend(), 0, [](int cur, const auto& entry) { return std::max(cur, std::get<1>(entry)); });
 
     MPI_Allreduce(MPI_IN_PLACE, &maxcount, 1, MPI_INT, MPI_MAX, comm);
 
@@ -357,7 +344,7 @@ void print_kmer_histogram(const KmerList& kmerlist, MPI_Comm comm) {
 
     for(size_t i = 0; i < kmerlist.size(); ++i)
     {
-        int cnt = std::get<3>(kmerlist[i]);
+        int cnt = std::get<1>(kmerlist[i]);
         assert(cnt >= 1);
         histo[cnt]++;
     }
