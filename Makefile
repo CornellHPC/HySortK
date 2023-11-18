@@ -39,7 +39,7 @@ obj/%.o: src/%.cpp
 	@echo $(COMPILER) $(FLAGS) -c -o $@ $<
 	$(COMPILER) $(FLAGS) -c -o $@ $<
 
-obj/main.o: src/main.cpp include/logger.hpp include/timer.hpp include/dnaseq.hpp include/dnabuffer.hpp include/fastaindex.hpp include/kmerops.hpp include/memcheck.hpp
+obj/main.o: src/main.cpp include/logger.hpp include/timer.hpp include/dnaseq.hpp include/dnabuffer.hpp include/fastaindex.hpp include/kmerops.hpp include/memcheck.hpp include/compiletime.h
 obj/logger.o: src/logger.cpp include/logger.hpp
 obj/dnaseq.o: src/dnaseq.cpp include/dnaseq.hpp
 obj/dnabuffer.o: src/dnabuffer.cpp include/dnabuffer.hpp include/dnaseq.hpp

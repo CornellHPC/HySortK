@@ -104,7 +104,6 @@ FastaIndex::FastaIndex(const std::string& fasta_fname, MPI_Comm comm) :  fasta_f
     MPI_Comm_rank(comm, &myrank);
     readcounts.resize(nprocs);
 
-    std::cout<<"000"<<std::endl;
 
 
     /*

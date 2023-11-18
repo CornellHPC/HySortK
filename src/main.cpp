@@ -7,6 +7,7 @@
 #include "dnabuffer.hpp"
 #include "dnaseq.hpp"
 #include "kmerops.hpp"
+#include "compiletime.h"
 
 std::string fasta_fname;
 
@@ -24,8 +25,18 @@ int main(int argc, char **argv){
 
     fasta_fname = argv[1];
 
-    log() << "fasta file: " << std::quoted(fasta_fname);
-    log.flush("Init");
+    int myrank;
+    int nprocs;
+    MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
+    MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
+
+    if (myrank == 0){
+        log() << "Fasta File: " << std::quoted(fasta_fname)<< std::endl;
+        log() << "Kmer Size: "<< KMER_SIZE << std::endl;
+        log() << "nprocs:" << nprocs << std::endl;
+
+    }
+    log.flush(log(), 0);
 
     timer.start();
     FastaIndex index(fasta_fname, MPI_COMM_WORLD);
