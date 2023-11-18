@@ -7,7 +7,7 @@
 #ifndef KMER_SIZE
 #error "KMER_SIZE must be defined"
 #else
-static_assert(2 < KMER_SIZE && KMER_SIZE < 96 && !!(KMER_SIZE & 1));
+static_assert(2 < KMER_SIZE && KMER_SIZE < 96);
 #ifdef SMER_SIZE
 static_assert(0 < SMER_SIZE && SMER_SIZE <= KMER_SIZE);
 #endif
