@@ -24,3 +24,5 @@ upcxx-srun -shared-heap 32G -n 64 -N 8 -c 32 --cpu_bind=cores -- ./ukmerc /pscra
 # upcxx-srun -shared-heap 32G -n 8 -N 1 -c 32 --cpu_bind=cores -- ./ukmerc /pscratch/sd/y/yfli03/ELBA_dataset/elba_gen/reads.fa | tee "elba_gen_4M.log"
 
 # upcxx-run -shared-heap 16G -n 8 -N 1 ./ukmerc /pscratch/sd/y/yfli03/ELBA_dataset/acinetobacter_baumannii/reads.fa | tee acine.log
+
+# srun -N 4 -n 64 -c 16 --cpu_bind=cores ./ukmerc /pscratch/sd/y/yfli03/ELBA_dataset/human40x/reads.fa | tee human.log

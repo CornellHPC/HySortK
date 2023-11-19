@@ -94,10 +94,39 @@ void print_mem_log(int nprocs, int myrank, std::string msg){
     if (myrank == 0)
     {
         std::cout<<msg<<std::endl;
-        for (int k = 0; k < nprocs; k++)
+        
+        uint64_t vmrss = 0;
+        uint64_t vmsize = 0;
+        for (int i = 0; i < nprocs; i++)
         {
-            printf("Process %03d: VmRSS = %6ld MB, VmSize = %6ld MB\n", 
-                k, vmrss_per_process[k] / 1024, vmsize_per_process[k] / 1024);
+            vmrss += vmrss_per_process[i];
+            vmsize += vmsize_per_process[i];
         }
+        vmrss /= (1024 * 1024);
+        vmsize /= (1024 * 1024);
+
+        printf("Total VmRSS = %6ld MB, VmSize = %6ld MB\n", vmrss, vmsize);
+    }
+}
+
+void get_mem(int nprocs, int myrank, size_t& vmrss, size_t& vmsize){
+    long vmrss_per_process[nprocs];
+    long vmsize_per_process[nprocs];
+    get_cluster_memory_usage_kb(vmrss_per_process, vmsize_per_process, 0, nprocs);
+
+    uint64_t vmrss_total = 0;
+    uint64_t vmsize_total = 0;
+
+    if (myrank == 0) {
+        for (int i = 0; i < nprocs; i++)
+        {
+            vmrss_total += vmrss_per_process[i];
+            vmsize_total += vmsize_per_process[i];
+        }
+        vmrss_total /= (1024 * 1024);
+        vmsize_total /= (1024 * 1024);
+
+        vmrss = vmrss_total;
+        vmsize = vmsize_total;
     }
 }
