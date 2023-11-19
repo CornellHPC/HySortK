@@ -105,7 +105,7 @@ void print_mem_log(int nprocs, int myrank, std::string msg){
         vmrss /= (1024 * 1024);
         vmsize /= (1024 * 1024);
 
-        printf("Total VmRSS = %6ld MB, VmSize = %6ld MB\n", vmrss, vmsize);
+        printf("Total VmRSS = %6ld GB, VmSize = %6ld GB\n", vmrss, vmsize);
     }
 }
 
