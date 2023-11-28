@@ -120,6 +120,7 @@ exchange_kmer(const DnaBuffer& myreads,
 
     std::vector<uint64_t> task_seedcnt(ntasks);                                 /* number of kmer seeds for each local task in total */
     std::vector<uint64_t> sthrcnt(nprocs * ntasks), rthrcnt(nprocs * ntasks);   /* number of kmer seeds for each global task (sending/reciving) */
+    std::vector<uint64_t> sprocnt(nprocs);                                      /* number of kmer seeds for each process */
     uint64_t batch_sz = std::numeric_limits<MPI_Count_t>::max() / nprocs;      
     batch_sz = std::min(batch_sz, (uint64_t)MAX_SEND_BATCH);
 
@@ -138,19 +139,37 @@ exchange_kmer(const DnaBuffer& myreads,
                 sthrcnt[i * ntasks + j] += kmerseeds_vecs[k][i * ntasks + j].size();
             }
 
-            #if LOG_LEVEL >= 2
-            logger() << sthrcnt[i * ntasks + j]  << "+";
-            #endif
+            sprocnt[i] += sthrcnt[i * ntasks + j];
+
         }
 
         #if LOG_LEVEL >= 2
-        logger() << ", ";
+        logger() << sprocnt[i] << ", ";
         #endif
     }
 
     #if LOG_LEVEL >= 2
     logger() << "}";
     logger.flush("K-mer exchange sendcounts:");
+    #endif
+
+    /* Calculate and sync the batch size 
+      *
+      * It is extremely slow if the batch size is relatively large,
+      * compared to the total amount of information to be sent. 
+      * I haven't found out the reason yet, 
+      * But limit the batch size to a reasonable value solves this problem and 
+      * is a good practice anyway.
+      */
+    size_t max_send_proc = *std::max_element(sprocnt.begin(), sprocnt.end());
+    max_send_proc = max_send_proc * seedbytes / 5;
+
+    MPI_Allreduce(MPI_IN_PLACE, &max_send_proc, 1, MPI_UNSIGNED_LONG_LONG, MPI_MAX, comm);
+    if (max_send_proc < batch_sz) batch_sz = max_send_proc;
+
+    #if LOG_LEVEL >= 3
+    logger() << "batch size: " << batch_sz;
+    logger.flush("K-mer exchange batch size:");
     #endif
 
     /* calculate the offset for each task */
