@@ -1,9 +1,11 @@
-K?=51
+K?=31
 L?=15
 U?=40
 LOG?=2
 D?=0
-COMPILE_TIME_PARAMETERS=-DKMER_SIZE=$(K) -DLOWER_KMER_FREQ=$(L) -DUPPER_KMER_FREQ=$(U) -DLOG_LEVEL=$(LOG) -DDEBUG=$(D)
+T?=4
+BATCH?=250000
+COMPILE_TIME_PARAMETERS=-DKMER_SIZE=$(K) -DLOWER_KMER_FREQ=$(L) -DUPPER_KMER_FREQ=$(U) -DLOG_LEVEL=$(LOG) -DDEBUG=$(D) -DTHREAD_PER_TASK=$(T) -DMAX_SEND_BATCH=$(BATCH)
 OPT=
 
 ifeq ($(D), 1)
@@ -12,7 +14,7 @@ else
 OPT+=-O3
 endif
 
-FLAGS=$(OPT) $(COMPILE_TIME_PARAMETERS) -DTHREADED -fopenmp -Wall -std=c++17 -I./include -I./src
+FLAGS=$(OPT) $(COMPILE_TIME_PARAMETERS) -DTHREADED -fopenmp -std=c++17 -I./include -I./src
 
 COMPILER=CC
 
@@ -31,12 +33,10 @@ install: ukmerc
 	cp ukmerc $(HOME)/bin
 
 ukmerc: obj/main.o $(OBJECTS)
-	@echo $(COMPILER) $(FLAGS) -c -o $@ $^
 	$(COMPILER) $(FLAGS) -o $@ $^ -lz
 
 obj/%.o: src/%.cpp
 	@mkdir -p $(@D)
-	@echo $(COMPILER) $(FLAGS) -c -o $@ $<
 	$(COMPILER) $(FLAGS) -c -o $@ $<
 
 obj/main.o: src/main.cpp include/logger.hpp include/timer.hpp include/dnaseq.hpp include/dnabuffer.hpp include/fastaindex.hpp include/kmerops.hpp include/memcheck.hpp include/compiletime.h

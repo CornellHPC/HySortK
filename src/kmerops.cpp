@@ -14,6 +14,158 @@
 #include <mpi.h>
 #include <thread>
 
+
+bool BatchSender::write_sendbuf(uint8_t* addr, int procid) {
+
+    size_t task = loc_task[procid];
+    size_t thr = loc_thr[procid];
+    size_t idx = loc_idx[procid];
+
+    if (task >= ntasks) return true;    /* all data have already been sent. */
+
+    std::vector<KmerSeedStruct> &v = kmerseeds[thr][procid * ntasks + task];
+    size_t max_idx = v.size();
+    uint8_t* addr_limit = addr + send_limit;    /* No more kmers should be written if going past this location */
+
+    while (addr <= addr_limit && task < ntasks) {
+
+        encode_kmerseed_basic(addr, v[idx]);
+        idx++;
+
+        /* Carry over to the next group to be sent */
+        if (idx >= max_idx) {
+            idx = 0;
+            thr++;
+            if (thr >= nthrs) {
+                thr = 0;
+                task++;
+            }
+            if (task >= ntasks) break;
+
+            v = kmerseeds[thr][procid * ntasks + task];
+            max_idx = v.size();
+        }
+    }
+
+    /* update the location of the next sending item */
+    loc_idx[procid] = idx;
+    loc_thr[procid] = thr;
+    loc_task[procid] = task;
+
+    return (task >= ntasks);
+}
+
+
+void BatchSender::write_sendbufs(uint8_t* addr) {
+    bool finished = true;
+
+    /* omp is not working well here */
+    // #pragma omp parallel for num_threads(4)
+    for(int i = 0; i < nprocs; i++) {
+        bool myfinished = write_sendbuf(addr + batch_sz * i, i);
+        
+        // #pragma omp critical
+        {
+            if (!myfinished) finished = false;
+        }
+    }
+
+    /* write the last byte of each buf, which indicates the sending state of the current process */
+    if (finished) {
+        for (int i = 0; i < nprocs; i++)
+            addr[batch_sz * i + batch_sz - 1] = 1;
+    } else {
+        for (int i = 0; i < nprocs; i++)
+            addr[batch_sz * i + batch_sz - 1] = 0;
+    }
+}
+
+
+uint8_t* BatchSender::progress() {
+    if (status != BATCH_SENDING) return 0;
+
+    #if LOG_LEVEL >= 3
+    MPITimer timer(comm);
+    timer.start();
+    #endif
+
+    /* write the sending buffer for the current round */
+    write_sendbufs(sendtmp_y);
+
+    #if LOG_LEVEL >= 3
+    timer.stop_and_log("write_sendbufs");
+    timer.start();
+    #endif
+
+    /* complete the sending and receiving of data for the current round */
+    MPI_Wait(&req, MPI_STATUS_IGNORE);
+
+    #if LOG_LEVEL >= 3
+    timer.stop_and_log("MPI_Wait");
+    #endif
+
+    std::swap(sendtmp_x, sendtmp_y);
+    std::swap(recvtmp_x, recvtmp_y); 
+
+    /* check if this process has sent all its kmers */
+    bool finished = true;
+    for (int i = 0; i < nprocs; i++)
+        if (recvtmp_y[batch_sz * i + batch_sz - 1] == false) {
+            finished = false;
+            break;
+        }
+
+    if (finished) {
+        status = BATCH_DONE;
+        return recvtmp_y;
+    }
+
+    /* start sending and receiving for the current round */
+    MPI_Ialltoall(sendtmp_x, batch_sz, MPI_BYTE, recvtmp_x, batch_sz, MPI_BYTE, comm, &req);
+    return recvtmp_y;
+}
+
+
+void BatchReceiver::receive(uint8_t* recvbuf){
+    #if LOG_LEVEL >= 3
+    MPITimer timer(MPI_COMM_WORLD);
+    timer.start();
+    #endif
+
+    for(int i = 0; i < nprocs; i++) 
+    {
+        if (recv_task_id[i] >= taskcnt) continue;                       /* all data for this task has been received */
+
+        /* current receiving information */
+        int working_task = recv_task_id[i];             
+        size_t cnt = recvcnt[i];
+        size_t max_cnt = expected_recvcnt[ taskcnt * i + working_task ];
+        uint8_t* addrs2read = recvbuf + batch_size * i;
+        uint8_t* addr_limit = addrs2read + send_limit;
+
+        while(addrs2read <= addr_limit && working_task < taskcnt) {
+            decode_basic(addrs2read, kmerseeds[working_task]);
+            cnt++;
+
+            /* Carry over to the next receiving group*/
+            if (cnt >= max_cnt) {
+                recv_task_id[i]++;
+                if (recv_task_id[i] >= taskcnt) break;
+                working_task++;
+                cnt = 0;
+                max_cnt = expected_recvcnt[ taskcnt * i + working_task ];
+            }
+        }
+
+        recvcnt[i] = cnt;
+    }
+
+    #if LOG_LEVEL >= 3
+    timer.stop_and_log("receive");
+    #endif
+}
+
+
 std::unique_ptr<KmerSeedBuckets>
 exchange_kmer(const DnaBuffer& myreads,
      MPI_Comm comm,
@@ -48,24 +200,24 @@ exchange_kmer(const DnaBuffer& myreads,
     // !! There may be a bug with large file and small rank num. in this case myread can read things wrong, resulting in 
     // !! Kmers with all A and C.
 
+
     #if LOG_LEVEL >= 2
     logger() << ntasks << " \t (thread per task: " << thr_per_task << ")";
     logger.flush("Task num:");
     logger() << nthr_membounded ;
     logger.flush("Thread count used for memory bounded operations:");
-    memchecker memcheck(nprocs, myrank);
     #endif
 
     #if LOG_LEVEL >= 3
     timer.start();
     #endif
 
-    size_t readoffset = numreads;         // yfli: not sure if we need this initial value
+    size_t readoffset = numreads;      
     if (!single_node)
         MPI_Exscan(&numreads, &readoffset, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, comm);
     if (!myrank) readoffset = 0;    
 
-    /* prepare the vars for each task */
+    /* prepare the parsing and sending vectors for each task */
     KmerSeedVecs kmerseeds_vecs;    
     for (int i = 0; i < nthr_membounded; i++ ) {
         kmerseeds_vecs.push_back(std::vector<std::vector<KmerSeedStruct>>(nprocs * ntasks));
@@ -94,7 +246,8 @@ exchange_kmer(const DnaBuffer& myreads,
 
     KmerSeedBuckets* recv_kmerseeds = new KmerSeedBuckets(ntasks);
 
-    if (nprocs == 1){
+    /* deapreciated: only 1 process, no need for MPI communication */
+    if (nprocs == 1) {
 
         #if LOG_LEVEL >= 3
         timer.start();
@@ -106,7 +259,6 @@ exchange_kmer(const DnaBuffer& myreads,
                 (*recv_kmerseeds)[j].insert((*recv_kmerseeds)[j].end(), kmerseeds_vecs[i][j].begin(), kmerseeds_vecs[i][j].end());
             }
         }
-        
 
         #if LOG_LEVEL >= 3
         timer.stop_and_log("Local K-mer format conversion (nprocs == 1) ");
@@ -116,8 +268,8 @@ exchange_kmer(const DnaBuffer& myreads,
         return std::unique_ptr<KmerSeedBuckets>(recv_kmerseeds);
     } 
 
-    /* more than 1 process, need MPI communication */
 
+    /* more than 1 process, need MPI communication */
     std::vector<uint64_t> task_seedcnt(ntasks);                                 /* number of kmer seeds for each local task in total */
     std::vector<uint64_t> sthrcnt(nprocs * ntasks), rthrcnt(nprocs * ntasks);   /* number of kmer seeds for each global task (sending/reciving) */
     std::vector<uint64_t> sprocnt(nprocs);                                      /* number of kmer seeds for each process */
@@ -130,17 +282,12 @@ exchange_kmer(const DnaBuffer& myreads,
     logger() << std::setprecision(4) << "sending 'row' k-mers to each processor in this amount : {";
     #endif
 
-    for (int i = 0; i < nprocs; ++i)
-    {
-        for (int j = 0; j < ntasks; j++) 
-        {
-            for (int k = 0; k < nthr_membounded; k++)
-            {
+    for (int i = 0; i < nprocs; ++i) {
+        for (int j = 0; j < ntasks; j++) {
+            for (int k = 0; k < nthr_membounded; k++) {
                 sthrcnt[i * ntasks + j] += kmerseeds_vecs[k][i * ntasks + j].size();
             }
-
             sprocnt[i] += sthrcnt[i * ntasks + j];
-
         }
 
         #if LOG_LEVEL >= 2
@@ -153,7 +300,7 @@ exchange_kmer(const DnaBuffer& myreads,
     logger.flush("K-mer exchange sendcounts:");
     #endif
 
-    /* Calculate and sync the batch size 
+     /* Calculate and sync the batch size 
       *
       * It is extremely slow if the batch size is relatively large,
       * compared to the total amount of information to be sent. 
@@ -168,14 +315,14 @@ exchange_kmer(const DnaBuffer& myreads,
     if (max_send_proc < batch_sz) batch_sz = max_send_proc;
 
     #if LOG_LEVEL >= 3
-    logger() << "batch size: " << batch_sz;
+    logger() << batch_sz;
     logger.flush("K-mer exchange batch size:");
     #endif
 
     /* calculate the offset for each task */
     MPI_Alltoall(sthrcnt.data(), ntasks, MPI_UNSIGNED_LONG_LONG, rthrcnt.data(), ntasks, MPI_UNSIGNED_LONG_LONG, comm);
 
-    /* calculate how many kmer seeds each thread will receive */
+    /* calculate how many kmer seeds each task will receive */
     size_t numkmerseeds = std::accumulate(rthrcnt.begin(), rthrcnt.end(), (uint64_t)0);
 
     for (int i = 0; i < ntasks; i++) {
@@ -189,19 +336,19 @@ exchange_kmer(const DnaBuffer& myreads,
         (*recv_kmerseeds)[i].reserve(task_seedcnt[i]);
     }
 
-    /* Sending in batches using Alltoall instead of Alltoallv */
+    /* Sending in batches. Init the sender and receiver */
     BatchSender bsender(comm, ntasks, nthr_membounded, batch_sz, kmerseeds_vecs);
-    BatchStorer bstorer(*recv_kmerseeds, ntasks, nprocs, rthrcnt.data(), batch_sz);
+    BatchReceiver breceiver(*recv_kmerseeds, ntasks, nprocs, rthrcnt.data(), batch_sz);
 
     bsender.init();
     int round = 0;
 
+    /* progress in rounds */
     while(bsender.get_status() != BatchSender::Status::BATCH_DONE) {
         round += 1;
-
         uint8_t* recvbuf = bsender.progress();
         assert(recvbuf != nullptr);
-        bstorer.store(recvbuf);
+        breceiver.receive(recvbuf);
     }
 
     #if LOG_LEVEL >= 3
@@ -215,20 +362,25 @@ exchange_kmer(const DnaBuffer& myreads,
     #if LOG_LEVEL >= 2
     logger() << "rounds: " << round << ", batch size: " << batch_sz << std::endl << std::endl;
     logger.flush(logger(), 0);
-
-    memcheck.log("After K-mer exchange");
+    print_mem_log(nprocs, myrank, "After Exchange");
     #endif
 
     return std::unique_ptr<KmerSeedBuckets>(recv_kmerseeds);
 }
+
 
 std::unique_ptr<KmerList>
 filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, int thr_per_task)
 {
 
     Logger logger(MPI_COMM_WORLD);
+    int myrank;
+    int nprocs;
+    MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
+    MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
     std::ostringstream rootlog;
 
+    /* determine how many threads to use for each task */
     int ntasks = omp_get_max_threads() / thr_per_task;
     if (ntasks < 1){
         ntasks = 1;
@@ -257,23 +409,25 @@ filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, int thr_per_task)
     timer.start();
     #endif
 
+    /* sort the receiving vectors */
     #pragma omp parallel 
     {
         int tid = omp_get_thread_num();
         paradis::sort<KmerSeedStruct, TKmer::NBYTES>((*recv_kmerseeds)[tid].data(), (*recv_kmerseeds)[tid].data() + task_seedcnt[tid], thr_per_task);
     
 
-    #if LOG_LEVEL >= 3
+#if LOG_LEVEL >= 3
     }
     timer.stop_and_log("Shared memory parallel K-mer sorting");
+    print_mem_log(nprocs, myrank, "After Sorting");
     timer.start();
     #pragma omp parallel
     {
         int tid = omp_get_thread_num();
-    #endif
+#endif
 
-
-        kmerlists[tid].reserve(uint64_t(task_seedcnt[tid] / LOWER_KMER_FREQ));    // This should be enough
+        /* do a linear scan and filter out the kmers we want */
+        kmerlists[tid].reserve(uint64_t(task_seedcnt[tid] / LOWER_KMER_FREQ));
         TKmer last_mer = (*recv_kmerseeds)[tid][0].kmer;
         uint64_t cur_kmer_cnt = 1;
         valid_kmer[tid] = 0;
@@ -302,7 +456,7 @@ filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, int thr_per_task)
             }
         }
 
-        // deal with the last kmer 
+        /* deal with the last kmer of a task */
         if (cur_kmer_cnt >= LOWER_KMER_FREQ && cur_kmer_cnt <= UPPER_KMER_FREQ) {
             kmerlists[tid].push_back(KmerListEntry());
             KmerListEntry& entry         = kmerlists[tid].back();
@@ -328,6 +482,7 @@ filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, int thr_per_task)
         logger() << valid_kmer[i] << " ";
     }
     logger.flush("Valid kmer from tasks:");
+    print_mem_log(nprocs, myrank, "After Counting");
     #endif
 
 
@@ -350,6 +505,7 @@ filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, int thr_per_task)
     return std::unique_ptr<KmerList>(kmerlist);
 }
 
+
 int GetKmerOwner(const TKmer& kmer, int nprocs) {
     uint64_t myhash = kmer.GetHash();
     double range = static_cast<double>(myhash) * static_cast<double>(nprocs);
@@ -357,6 +513,7 @@ int GetKmerOwner(const TKmer& kmer, int nprocs) {
     assert(owner >= 0 && owner < static_cast<int>(nprocs));
     return static_cast<int>(owner);
 }
+
 
 void print_kmer_histogram(const KmerList& kmerlist, MPI_Comm comm) {
     #if LOG_LEVEL >= 2

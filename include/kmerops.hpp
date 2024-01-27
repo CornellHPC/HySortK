@@ -19,9 +19,7 @@ typedef std::array<ReadId,    UPPER_KMER_FREQ> READIDS;
 typedef std::tuple<TKmer, int> KmerListEntry;
 typedef std::vector<KmerListEntry> KmerList;
 
-#define DEFAULT_THREAD_PER_TASK 4
-#define MAX_THREAD_MEMORY_BOUNDED 8
-#define MAX_SEND_BATCH 1000000
+#define MAX_THREAD_MEMORY_BOUNDED 8 
 
 struct KmerSeedStruct{
     TKmer kmer;      
@@ -50,12 +48,12 @@ typedef std::vector<std::vector<std::vector<KmerSeedStruct>>> KmerSeedVecs;
 std::unique_ptr<KmerSeedBuckets> 
 exchange_kmer(const DnaBuffer& myreads,
      MPI_Comm comm,
-     int thr_per_task = DEFAULT_THREAD_PER_TASK,
+     int thr_per_task = THREAD_PER_TASK,
      int max_thr_membounded = MAX_THREAD_MEMORY_BOUNDED);
 
 std::unique_ptr<KmerList>
 filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, 
-     int thr_per_task = DEFAULT_THREAD_PER_TASK);
+     int thr_per_task = THREAD_PER_TASK);
 
 int GetKmerOwner(const TKmer& kmer, int nprocs);
 
@@ -80,17 +78,20 @@ private:
     Status status;
     MPI_Request req;
 
-    size_t batch_sz;        /* batch size in bytes */
-    size_t send_limit;      /* the max number of bytes for data */
-    size_t ntasks;             /* the number of tasks */
-    size_t nthrs;             /* the number of threads */
-    size_t* loc_task;     /* the location of the currently sending task cnt for processes */
-    size_t* loc_thr;      /* the location of the currently sending thread cnt for processes */
-    size_t* loc_idx;      /* the location of the next sending item for processors */
+    size_t batch_sz;            /* maxium batch size in bytes */
+    size_t send_limit;          /* maxium size of meaningful data in bytes */
+    size_t ntasks;              /* number of tasks */
+    size_t nthrs;               /* number of threads */
+    size_t* loc_task;           /* the location of the currently sending (destination) task id for processes */
+    size_t* loc_thr;            /* the location of the currently sending (local) thread id for processes */
+    size_t* loc_idx;            /* the location of the next sending item for processors */
 
-    KmerSeedVecs& kmerseeds;
+    KmerSeedVecs& kmerseeds;    /* the kmers to be sent */
 
-    /* x is always the one that is currently sending, y is the one that can be used */
+    /* 
+     * two sending / receiving buffers are used to overlap computation and communication
+     * x is always the buffer that is currently sending, y is the one that can be overwritten 
+     */
     uint8_t* sendtmp_x;
     uint8_t* recvtmp_x;
     uint8_t* sendtmp_y;
@@ -98,105 +99,41 @@ private:
 
     /* encode and write a kmerseed to the current buffer address */
     void encode_kmerseed_basic(uint8_t* &addr, KmerSeedStruct& kmerseed) {
-
         TKmer kmer = kmerseed.kmer;
-
         memcpy(addr, kmer.GetBytes(), TKmer::NBYTES);
-
         addr += (sizeof(TKmer));
     }
 
     /* 
-     * Write sendbuf for a process. returns if it has completed 
-     * This function is also responsible for determining the vector to read from
-     * Returns if all data has been sent (for this process)
+     * Write sendbuf for one destination process. 
+     * Returns true if all kmers to this process have been sent.
      */
-    bool write_sendbuf(uint8_t* addr, int procid) {
+    bool write_sendbuf(uint8_t* addr, int procid);
 
-        size_t task = loc_task[procid];
-        size_t thr = loc_thr[procid];
-        size_t idx = loc_idx[procid];
-
-        std::vector<KmerSeedStruct> &v = kmerseeds[thr][procid * ntasks + task];
-        // std::cout<<kmerseeds[thr].size()<<" "<<procid * ntasks + task<<std::endl;
-
-        if (task >= ntasks) return true;    // all data has been sent. is there a bug in the original version?
-
-        size_t max_idx = v.size();
-
-        uint8_t* addr_limit = addr + send_limit;
-
-        while (addr <= addr_limit && task < ntasks) {
-            encode_kmerseed_basic(addr, v[idx]);
-            idx++;
-
-            if (idx >= max_idx) {
-                idx = 0;
-                thr++;
-                if (thr >= nthrs) {
-                    thr = 0;
-                    task++;
-                }
-                if (task >= ntasks) break;
-
-                v = kmerseeds[thr][procid * ntasks + task];
-                max_idx = v.size();
-            }
-        }
-
-        loc_idx[procid] = idx;
-        loc_thr[procid] = thr;
-        loc_task[procid] = task;
-
-        return (task >= ntasks);
-    }
-
-    /* write the whole sendbuf for one pass. returns if all data has been sent */
-    void write_sendbufs(uint8_t* addr) {
-
-        bool finished = true;
-
-        // #pragma omp parallel for num_threads(4)
-        for(int i = 0; i < nprocs; i++) {
-            bool myfinished = write_sendbuf(addr + batch_sz * i, i);
-            
-            // #pragma omp critical
-            {
-                if (!myfinished) finished = false;
-            }
-        }
-
-        /* write the last byte of each buf which indicates finished or not */
-        if (finished) {
-            for (int i = 0; i < nprocs; i++)
-                addr[batch_sz * i + batch_sz - 1] = 1;
-        } else {
-            for (int i = 0; i < nprocs; i++)
-                addr[batch_sz * i + batch_sz - 1] = 0;
-        }
-
-    }
+    /* 
+     * Write sendbuf for all destination processes
+     */
+    void write_sendbufs(uint8_t* addr);
 
 
 public:
 
-    void print_results(Logger &l) {
-       // l()<<ca<<" "<<cb<<" "<<cc<<" "<<cd<<std::endl;
-       // l.flush("compress results");
-    }
+    /* we may want to log something */
+    void print_results(Logger &l) {}
+
     BatchSender(MPI_Comm comm, size_t ntasks, size_t nthrs, size_t batch_size, KmerSeedVecs& kmerseeds) : 
         comm(comm), batch_sz(batch_size), kmerseeds(kmerseeds), status(BATCH_NOT_INIT), ntasks(ntasks), nthrs(nthrs)
     {
         /*
          * Suppose buffer has a max size of n
          * n - size(kmer) - size(readid) - size(posinread) - sizeof(char) = max start location
-         * which means that when the pointer is leq this value, we must continue to store items
-         * if the pointer is greater than the value, we cannot store items anymore
-         * the last byte is reserved for the flag, indicating if a process has sent all its data .
+         * which means that when the pointer is leq this value (and we still have kmers to send), we must continue to encode and write
+         * Or, if the pointer is greater than the value, we cannot store items anymore
+         * the last byte is reserved for the flag, indicating if the current process has sent all its data .
          * 
-         * We also need to take care: what if I have sent all my data but some other processes haven't?
-         * Well, we just sent random bits to the process. The Important thing is that the last flag is always set.
-         * The dst process know how many kmers we're sending, so it will limit the number of kmers it reads.
+         * What if I have sent all my data but some other processes haven't?
+         * Well, just send random bits. The important thing is that the flag is always set.
+         * The destination process knows how many kmers we're sending, so it won't decode meaningless data.
          */
 
         send_limit = batch_sz - sizeof(char) - TKmer::NBYTES - sizeof(char);
@@ -216,6 +153,7 @@ public:
         memset(loc_task, 0, sizeof(size_t) * nprocs);
         memset(loc_thr, 0, sizeof(size_t) * nprocs);
         memset(loc_idx, 0, sizeof(size_t) * nprocs);
+
     };
 
     ~BatchSender()  
@@ -232,70 +170,33 @@ public:
 
     Status get_status() { return status; }
 
-    void init()
-    {
-
+    /* initialize the sender, send the first batch of data */
+    void init() {
         status = BATCH_SENDING;
         write_sendbufs(sendtmp_x);
         MPI_Ialltoall(sendtmp_x, batch_sz, MPI_BYTE, recvtmp_x, batch_sz, MPI_BYTE, comm, &req);
 
     }
 
-    uint8_t* progress() {
-        if (status != BATCH_SENDING) return 0;
-
-        #if LOG_LEVEL >= 3
-        MPITimer timer(comm);
-        timer.start();
-        #endif
-
-        write_sendbufs(sendtmp_y);
-
-        #if LOG_LEVEL >= 3
-        timer.stop_and_log("write_sendbufs");
-        timer.start();
-        #endif
-
-        MPI_Wait(&req, MPI_STATUS_IGNORE);
-
-        #if LOG_LEVEL >= 3
-        timer.stop_and_log("MPI_Wait");
-        #endif
-
-        std::swap(sendtmp_x, sendtmp_y);
-        std::swap(recvtmp_x, recvtmp_y); 
-
-        // see if completed
-        bool finished = true;
-        for (int i = 0; i < nprocs; i++)
-            if (recvtmp_y[batch_sz * i + batch_sz - 1] == false) {
-                finished = false;
-                break;
-            }
-
-        if (finished) {
-            status = BATCH_DONE;
-            return recvtmp_y;
-        }
-
-
-        MPI_Ialltoall(sendtmp_x, batch_sz, MPI_BYTE, recvtmp_x, batch_sz, MPI_BYTE, comm, &req);
-        return recvtmp_y;
-    }
+    /* 
+     * progress to another round 
+     * returns the receiving buffer from the last round
+     */
+    uint8_t* progress();
 };
 
 
-class BatchStorer
+class BatchReceiver
 {
     KmerSeedBuckets& kmerseeds;
     int taskcnt, nprocs;
     size_t batch_size;
     size_t send_limit;
-    size_t* expected_recvcnt;
-    size_t* recvcnt;
-    int* recv_task_id;
+    size_t* expected_recvcnt;           /* the expected total recv counts */
+    size_t* recvcnt;                    /* current recv counts */
+    int* recv_task_id;                  /* current receiving task ids*/
 
-    /* it should be inlined by default */
+    /* decode the raw bytes into kmer structs */
     inline void decode_basic(uint8_t* &addr, std::vector<KmerSeedStruct> &kmerseeds) {
         TKmer kmer((void*)addr);                
         kmerseeds.emplace_back(kmer);
@@ -304,7 +205,7 @@ class BatchStorer
 
 
 public:
-    BatchStorer(KmerSeedBuckets& kmerseeds,  int taskcnt, int nprocs, size_t* expected_recvcnt, size_t batch_size) : 
+    BatchReceiver(KmerSeedBuckets& kmerseeds,  int taskcnt, int nprocs, size_t* expected_recvcnt, size_t batch_size) : 
         kmerseeds(kmerseeds), taskcnt(taskcnt), nprocs(nprocs), expected_recvcnt(expected_recvcnt), batch_size(batch_size)
         {
             send_limit = batch_size - sizeof(char) - TKmer::NBYTES - sizeof(char);
@@ -314,7 +215,7 @@ public:
             memset(recv_task_id, 0, sizeof(int) * nprocs);
         }
 
-    ~BatchStorer()
+    ~BatchReceiver()
     {
         
         delete[] recvcnt;
@@ -322,43 +223,11 @@ public:
         
     }
 
-    void store(uint8_t* recvbuf)
-    {
-        #if LOG_LEVEL >= 3
-        MPITimer timer(MPI_COMM_WORLD);
-        timer.start();
-        #endif
-
-        for(int i = 0; i < nprocs; i++) 
-        {
-            //init_decoder();
-            if (recv_task_id[i] >= taskcnt) continue;      // all data for this task has been received. all the rest is padding
-            int working_task = recv_task_id[i];
-            size_t cnt = recvcnt[i];
-            size_t max_cnt = expected_recvcnt[ taskcnt * i + working_task ];
-            uint8_t* addrs2read = recvbuf + batch_size * i;
-            uint8_t* addr_limit = addrs2read + send_limit;
-
-            while(addrs2read <= addr_limit && working_task < taskcnt) {
-                decode_basic(addrs2read, kmerseeds[working_task]);
-                cnt++;
-
-                if (cnt >= max_cnt) {
-                    recv_task_id[i]++;
-                    if (recv_task_id[i] >= taskcnt) break;
-                    working_task++;
-                    cnt = 0;
-                    max_cnt = expected_recvcnt[ taskcnt * i + working_task ];
-                }
-            }
-
-            recvcnt[i] = cnt;
-        }
-
-        #if LOG_LEVEL >= 3
-        timer.stop_and_log("store");
-        #endif
-    }
+    /*
+     * Receive data from the sender.
+     * Partition them into buckets
+     */
+    void receive(uint8_t* recvbuf);
 };
 
 struct KmerParserHandler
@@ -383,8 +252,6 @@ void ForeachKmerParallel(const DnaBuffer& myreads, std::vector<KmerHandler>& han
     /*
      * Go through each local read.
      */
-
-    // yfli: TODO: test the performance of different number of threads. This might be a memory bandwidth issue.
 
     /* cosidering the NUMA effect, we may want the vecs to be NUMA-local*/
     #pragma omp parallel for num_threads(nthreads) 

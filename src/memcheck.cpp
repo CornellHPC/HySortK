@@ -1,7 +1,7 @@
 /* Taken from https://hpcf.umbc.edu/general-productivity/checking-memory-usage/ */
 #include "memcheck.hpp"
 
-int get_memory_usage_kb(long* vmrss_kb, long* vmsize_kb)
+int get_memory_usage_kb(long* vmrss_kb, long* vmpeak_kb)
 {
     /* Get the the current process' status file from the proc filesystem */
     FILE* procfile = fopen("/proc/self/status", "r");
@@ -12,14 +12,14 @@ int get_memory_usage_kb(long* vmrss_kb, long* vmsize_kb)
     fclose(procfile);
 
     short found_vmrss = 0;
-    short found_vmsize = 0;
+    short found_vmpeak = 0;
     char* search_result;
 
     /* Look through proc status contents line by line */
     char delims[] = "\n";
     char* line = strtok(buffer, delims);
 
-    while (line != NULL && (found_vmrss == 0 || found_vmsize == 0) )
+    while (line != NULL && (found_vmrss == 0 || found_vmpeak == 0) )
     {
         search_result = strstr(line, "VmRSS:");
         if (search_result != NULL)
@@ -28,24 +28,24 @@ int get_memory_usage_kb(long* vmrss_kb, long* vmsize_kb)
             found_vmrss = 1;
         }
 
-        search_result = strstr(line, "VmSize:");
+        search_result = strstr(line, "VmPeak:");
         if (search_result != NULL)
         {
-            sscanf(line, "%*s %ld", vmsize_kb);
-            found_vmsize = 1;
+            sscanf(line, "%*s %ld", vmpeak_kb);
+            found_vmpeak = 1;
         }
 
         line = strtok(NULL, delims);
     }
 
-    return (found_vmrss == 1 && found_vmsize == 1) ? 0 : 1;
+    return (found_vmrss == 1 && found_vmpeak == 1) ? 0 : 1;
 }
 
-int get_cluster_memory_usage_kb(long* vmrss_per_process, long* vmsize_per_process, int root, int np)
+int get_cluster_memory_usage_kb(long* vmrss_per_process, long* vmpeak_per_process, int root, int np)
 {
     long vmrss_kb;
-    long vmsize_kb;
-    int ret_code = get_memory_usage_kb(&vmrss_kb, &vmsize_kb);
+    long vmpeak_kb;
+    int ret_code = get_memory_usage_kb(&vmrss_kb, &vmpeak_kb);
 
     if (ret_code != 0)
     {
@@ -57,55 +57,34 @@ int get_cluster_memory_usage_kb(long* vmrss_per_process, long* vmsize_per_proces
         vmrss_per_process, 1, MPI_UNSIGNED_LONG, 
         root, MPI_COMM_WORLD);
 
-    MPI_Gather(&vmsize_kb, 1, MPI_UNSIGNED_LONG, 
-        vmsize_per_process, 1, MPI_UNSIGNED_LONG, 
+    MPI_Gather(&vmpeak_kb, 1, MPI_UNSIGNED_LONG, 
+        vmpeak_per_process, 1, MPI_UNSIGNED_LONG, 
         root, MPI_COMM_WORLD);
 
     return 0;
 }
 
-int get_global_memory_usage_kb(long* global_vmrss, long* global_vmsize, int np)
-{
-    long vmrss_per_process[np];
-    long vmsize_per_process[np];
-    int ret_code = get_cluster_memory_usage_kb(vmrss_per_process, vmsize_per_process, 0, np);
-
-    if (ret_code != 0)
-    {
-        return ret_code;
-    }
-
-    *global_vmrss = 0;
-    *global_vmsize = 0;
-    for (int i = 0; i < np; i++)
-    {
-        *global_vmrss += vmrss_per_process[i];
-        *global_vmsize += vmsize_per_process[i];
-    }
-
-    return 0;
-}
 
 void print_mem_log(int nprocs, int myrank, std::string msg){
     long vmrss_per_process[nprocs];
-    long vmsize_per_process[nprocs];
-    get_cluster_memory_usage_kb(vmrss_per_process, vmsize_per_process, 0, nprocs);
+    long vmpeak_per_process[nprocs];
+    get_cluster_memory_usage_kb(vmrss_per_process, vmpeak_per_process, 0, nprocs);
 
     if (myrank == 0)
     {
         std::cout<<msg<<std::endl;
         
         uint64_t vmrss = 0;
-        uint64_t vmsize = 0;
+        uint64_t vmpeak = 0;
         for (int i = 0; i < nprocs; i++)
         {
             vmrss += vmrss_per_process[i];
-            vmsize += vmsize_per_process[i];
+            vmpeak += vmpeak_per_process[i];
         }
         vmrss /= (1024 * 1024);
-        vmsize /= (1024 * 1024);
+        vmpeak /= (1024 * 1024);
 
-        printf("Total VmRSS = %6ld GB, VmSize = %6ld GB\n", vmrss, vmsize);
+        printf("Total VmRSS = %6ld GB, VmPeak = %6ld GB\n", vmrss, vmpeak);
     }
 }
 

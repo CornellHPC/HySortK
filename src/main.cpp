@@ -1,5 +1,6 @@
 #include<iostream>
 #include<mpi.h>
+#include<omp.h>
 
 #include "logger.hpp"
 #include "timer.hpp"
@@ -31,10 +32,20 @@ int main(int argc, char **argv){
     MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
 
     if (myrank == 0){
-        log() << "Fasta File: " << std::quoted(fasta_fname)<< std::endl;
-        log() << "Kmer Size: "<< KMER_SIZE << std::endl;
-        log() << "nprocs:" << nprocs << std::endl;
+        std::cerr << "Compiling Parameters:" << std::endl;
+        std::cerr << "      KMER_SIZE: " << KMER_SIZE << std::endl;
+        std::cerr << "      THREAD_PER_TASK: " << THREAD_PER_TASK << std::endl;
+        std::cerr << "      LOWER_KMER_FREQ: " << LOWER_KMER_FREQ << std::endl;
+        std::cerr << "      UPPER_KMER_FREQ: " << UPPER_KMER_FREQ << std::endl;
+        std::cerr << "      LOGGING_LEVEL: " << LOG_LEVEL << std::endl;
+        std::cerr << "      DEBUG: " << DEBUG << std::endl<< std::endl;
+    }
 
+    if (myrank == 0){
+        log() << "Runtime Parameters:" << std::endl;
+        log() << "      Fasta File: " << std::quoted(fasta_fname)<< std::endl;
+        log() << "      Nprocs:" << nprocs << std::endl;
+        log() << "      Default Maximum Thread Count Per Process: " << omp_get_max_threads() << std::endl;
     }
     log.flush(log(), 0);
 
@@ -45,16 +56,14 @@ int main(int argc, char **argv){
 
     ss.clear(); ss.str("");
 
-    /*
-        * DnaBuffer @mydna stores the compressed read sequences assigned
-        * to it by the .fai index file, as determined by @index.
-        */
+
     timer.start();
     DnaBuffer mydna = index.getmydna();
     ss << "reading and 2-bit encoding " << std::quoted(index.get_fasta_fname()) << " sequences in parallel";
     timer.stop_and_log(ss.str().c_str());
     ss.clear(); ss.str("");
 
+    /* start kmer counting */
     timer.start();
     auto bucket = exchange_kmer(mydna, MPI_COMM_WORLD);
     timer.stop_and_log("exchange_kmer");
