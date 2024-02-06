@@ -14,6 +14,8 @@
 #include <mpi.h>
 #include <thread>
 
+#define OVERLAP_LEVEL 2
+
 
 bool BatchSender::write_sendbuf(uint8_t* addr, int procid) {
 
@@ -85,7 +87,7 @@ uint8_t* BatchSender::progress() {
     if (status != BATCH_SENDING) return 0;
 
     #if LOG_LEVEL >= 3
-    MPITimer timer(comm);
+    Timer timer(comm);
     timer.start();
     #endif
 
@@ -125,10 +127,111 @@ uint8_t* BatchSender::progress() {
     return recvtmp_y;
 }
 
+uint8_t* BatchSender::progress_basic_overlap() {
+    if (status != BATCH_SENDING) return 0;
+
+    #if LOG_LEVEL >= 3
+    Timer timer(comm);
+    timer.start();
+    #endif
+
+    /* complete the sending and receiving of data for the current round */
+    MPI_Wait(&req, MPI_STATUS_IGNORE);
+
+    #if LOG_LEVEL >= 3
+    timer.stop_and_log("MPI_Wait");
+    timer.start();
+    #endif
+
+    /* write the sending buffer for the current round */
+    write_sendbufs(sendtmp_y);
+
+    #if LOG_LEVEL >= 3
+    timer.stop_and_log("write_sendbufs");
+    timer.start();
+    #endif
+
+
+    std::swap(sendtmp_x, sendtmp_y);
+    std::swap(recvtmp_x, recvtmp_y); 
+
+    /* check if this process has sent all its kmers */
+    bool finished = true;
+    for (int i = 0; i < nprocs; i++)
+        if (recvtmp_y[batch_sz * i + batch_sz - 1] == false) {
+            finished = false;
+            break;
+        }
+
+    if (finished) {
+        status = BATCH_DONE;
+        return recvtmp_y;
+    }
+
+    /* start sending and receiving for the current round */
+    MPI_Ialltoall(sendtmp_x, batch_sz, MPI_BYTE, recvtmp_x, batch_sz, MPI_BYTE, comm, &req);
+    return recvtmp_y;
+}
+
+uint8_t* BatchSender::progress_basic_a() {
+    if (status != BATCH_SENDING) return 0;
+
+    #if LOG_LEVEL >= 3
+    Timer timer(comm);
+    timer.start();
+    #endif
+
+    /* complete the sending and receiving of data for the current round */
+    MPI_Wait(&req, MPI_STATUS_IGNORE);
+
+    #if LOG_LEVEL >= 3
+    timer.stop_and_log("MPI_Wait");
+    #endif
+
+    return recvtmp_x;
+}
+
+
+void BatchSender::progress_basic_b() {
+    #if LOG_LEVEL >= 3
+    Timer timer(comm);
+    timer.start();
+    #endif
+
+    /* write the sending buffer for the current round */
+    write_sendbufs(sendtmp_y);
+
+    #if LOG_LEVEL >= 3
+    timer.stop_and_log("write_sendbufs");
+    timer.start();
+    #endif
+
+
+    std::swap(sendtmp_x, sendtmp_y);
+    std::swap(recvtmp_x, recvtmp_y); 
+
+    /* check if this process has sent all its kmers */
+    bool finished = true;
+    for (int i = 0; i < nprocs; i++)
+        if (recvtmp_y[batch_sz * i + batch_sz - 1] == false) {
+            finished = false;
+            break;
+        }
+
+    if (finished) {
+        status = BATCH_DONE;
+        return;
+    }
+
+    /* start sending and receiving for the current round */
+    MPI_Ialltoall(sendtmp_x, batch_sz, MPI_BYTE, recvtmp_x, batch_sz, MPI_BYTE, comm, &req);
+    return;
+}
+
 
 void BatchReceiver::receive(uint8_t* recvbuf){
     #if LOG_LEVEL >= 3
-    MPITimer timer(MPI_COMM_WORLD);
+    Timer timer(MPI_COMM_WORLD);
     timer.start();
     #endif
 
@@ -174,7 +277,7 @@ exchange_kmer(const DnaBuffer& myreads,
 {
 
     #if LOG_LEVEL >= 3
-    MPITimer timer(comm);
+    Timer timer(comm);
     #endif
 
     int myrank;
@@ -337,6 +440,8 @@ exchange_kmer(const DnaBuffer& myreads,
     }
 
     /* Sending in batches. Init the sender and receiver */
+    // The Sender is actually the sender and receiver
+    // The Receiver is actully the one that store into local buffer
     BatchSender bsender(comm, ntasks, nthr_membounded, batch_sz, kmerseeds_vecs);
     BatchReceiver breceiver(*recv_kmerseeds, ntasks, nprocs, rthrcnt.data(), batch_sz);
 
@@ -346,9 +451,26 @@ exchange_kmer(const DnaBuffer& myreads,
     /* progress in rounds */
     while(bsender.get_status() != BatchSender::Status::BATCH_DONE) {
         round += 1;
+
+#if OVERLAP_LEVEL == 0
         uint8_t* recvbuf = bsender.progress();
         assert(recvbuf != nullptr);
         breceiver.receive(recvbuf);
+#endif
+
+#if OVERLAP_LEVEL == 1
+        uint8_t* recvbuf = bsender.progress_basic_overlap();
+        assert(recvbuf != nullptr);
+        breceiver.receive(recvbuf);
+#endif
+
+#if OVERLAP_LEVEL == 2
+        uint8_t* recvbuf = bsender.progress_basic_a();
+        assert(recvbuf != nullptr);
+        breceiver.receive(recvbuf);
+        bsender.progress_basic_b();
+#endif
+
     }
 
     #if LOG_LEVEL >= 3
@@ -406,6 +528,7 @@ filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, int thr_per_task)
     #endif
 
     #if LOG_LEVEL >= 3
+    Timer timer(MPI_COMM_WORLD);
     timer.start();
     #endif
 

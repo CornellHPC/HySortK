@@ -10,6 +10,8 @@ OPT=
 
 ifeq ($(D), 1)
 OPT+=-g -O2 -fsanitize=address -fno-omit-frame-pointer
+else ifeq ($(D), 2)		# Debugging with MAP
+OPT+=-g1 -O3 -fno-inline -fno-optimize-sibling-calls
 else
 OPT+=-O3
 endif

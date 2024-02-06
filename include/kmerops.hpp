@@ -183,6 +183,9 @@ public:
      * returns the receiving buffer from the last round
      */
     uint8_t* progress();
+    uint8_t* progress_basic_overlap();
+    uint8_t* progress_basic_a();
+    void progress_basic_b();
 };
 
 
