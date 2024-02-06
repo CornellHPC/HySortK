@@ -14,8 +14,6 @@
 #include <mpi.h>
 #include <thread>
 
-#define OVERLAP_LEVEL 2
-
 
 bool BatchSender::write_sendbuf(uint8_t* addr, int procid) {
 
@@ -25,13 +23,13 @@ bool BatchSender::write_sendbuf(uint8_t* addr, int procid) {
 
     if (task >= ntasks) return true;    /* all data have already been sent. */
 
-    std::vector<KmerSeedStruct> &v = kmerseeds[thr][procid * ntasks + task];
-    size_t max_idx = v.size();
+    std::vector<KmerSeedStruct> *v = &(kmerseeds[thr][procid * ntasks + task]);
+    size_t max_idx = v->size();
     uint8_t* addr_limit = addr + send_limit;    /* No more kmers should be written if going past this location */
 
     while (addr <= addr_limit && task < ntasks) {
 
-        encode_kmerseed_basic(addr, v[idx]);
+        encode_kmerseed_basic(addr, (*v)[idx]);
         idx++;
 
         /* Carry over to the next group to be sent */
@@ -44,8 +42,8 @@ bool BatchSender::write_sendbuf(uint8_t* addr, int procid) {
             }
             if (task >= ntasks) break;
 
-            v = kmerseeds[thr][procid * ntasks + task];
-            max_idx = v.size();
+            v = &(kmerseeds[thr][procid * ntasks + task]);
+            max_idx = v->size();
         }
     }
 
@@ -61,12 +59,11 @@ bool BatchSender::write_sendbuf(uint8_t* addr, int procid) {
 void BatchSender::write_sendbufs(uint8_t* addr) {
     bool finished = true;
 
-    /* omp is not working well here */
-    // #pragma omp parallel for num_threads(4)
+    #pragma omp parallel for num_threads(2)
     for(int i = 0; i < nprocs; i++) {
         bool myfinished = write_sendbuf(addr + batch_sz * i, i);
         
-        // #pragma omp critical
+        #pragma omp critical
         {
             if (!myfinished) finished = false;
         }
@@ -88,14 +85,19 @@ uint8_t* BatchSender::progress() {
 
     #if LOG_LEVEL >= 3
     Timer timer(comm);
+    Logger logger(comm);
     timer.start();
+    double elapsed;
     #endif
 
     /* write the sending buffer for the current round */
     write_sendbufs(sendtmp_y);
 
     #if LOG_LEVEL >= 3
+    elapsed = timer.get_elapsed();
     timer.stop_and_log("write_sendbufs");
+    logger() <<elapsed;
+    logger.flush("write_sendbufs");
     timer.start();
     #endif
 
@@ -103,8 +105,14 @@ uint8_t* BatchSender::progress() {
     MPI_Wait(&req, MPI_STATUS_IGNORE);
 
     #if LOG_LEVEL >= 3
+    elapsed = timer.get_elapsed();
     timer.stop_and_log("MPI_Wait");
+    logger() << elapsed;
+    logger.flush("MPI_Wait");
+    timer.start();
     #endif
+
+
 
     std::swap(sendtmp_x, sendtmp_y);
     std::swap(recvtmp_x, recvtmp_y); 
@@ -452,7 +460,7 @@ exchange_kmer(const DnaBuffer& myreads,
     while(bsender.get_status() != BatchSender::Status::BATCH_DONE) {
         round += 1;
 
-#if OVERLAP_LEVEL == 0
+#if OVERLAP_LEVEL == 2
         uint8_t* recvbuf = bsender.progress();
         assert(recvbuf != nullptr);
         breceiver.receive(recvbuf);
@@ -464,7 +472,7 @@ exchange_kmer(const DnaBuffer& myreads,
         breceiver.receive(recvbuf);
 #endif
 
-#if OVERLAP_LEVEL == 2
+#if OVERLAP_LEVEL == 0
         uint8_t* recvbuf = bsender.progress_basic_a();
         assert(recvbuf != nullptr);
         breceiver.receive(recvbuf);

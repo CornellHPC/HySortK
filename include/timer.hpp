@@ -53,6 +53,11 @@ struct Timer
         stop();
         log(label);
     }
+
+    double get_elapsed() const
+    {
+        return elapsed + MPI_Wtime();
+    }
 };
 
 #endif

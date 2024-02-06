@@ -38,7 +38,8 @@ int main(int argc, char **argv){
         std::cerr << "      LOWER_KMER_FREQ: " << LOWER_KMER_FREQ << std::endl;
         std::cerr << "      UPPER_KMER_FREQ: " << UPPER_KMER_FREQ << std::endl;
         std::cerr << "      LOGGING_LEVEL: " << LOG_LEVEL << std::endl;
-        std::cerr << "      DEBUG: " << DEBUG << std::endl<< std::endl;
+        std::cerr << "      DEBUG: " << DEBUG << std::endl;
+        std::cerr << "      OVERLAP_LEVEL: " << OVERLAP_LEVEL << std::endl << std::endl;
     }
 
     if (myrank == 0){
