@@ -34,6 +34,7 @@ int main(int argc, char **argv){
     if (myrank == 0){
         std::cerr << "Compiling Parameters:" << std::endl;
         std::cerr << "      KMER_SIZE: " << KMER_SIZE << std::endl;
+        std::cerr << "      MINIMIZER_SIZE: " << MINIMIZER_SIZE << std::endl;
         std::cerr << "      THREAD_PER_TASK: " << THREAD_PER_TASK << std::endl;
         std::cerr << "      LOWER_KMER_FREQ: " << LOWER_KMER_FREQ << std::endl;
         std::cerr << "      UPPER_KMER_FREQ: " << UPPER_KMER_FREQ << std::endl;
@@ -64,16 +65,17 @@ int main(int argc, char **argv){
     timer.stop_and_log(ss.str().c_str());
     ss.clear(); ss.str("");
 
+
     /* start kmer counting */
     timer.start();
-    auto bucket = exchange_kmer(mydna, MPI_COMM_WORLD);
-    timer.stop_and_log("exchange_kmer");
+    prepare_supermer(mydna, MPI_COMM_WORLD);
+    timer.stop_and_log("prepare_supermer");
 
     timer.start();
-    auto kmerlist = filter_kmer(bucket);
+    // auto kmerlist = filter_kmer(bucket);
     timer.stop_and_log("filter_kmer");
 
-    print_kmer_histogram(*kmerlist, MPI_COMM_WORLD);
+    // print_kmer_histogram(*kmerlist, MPI_COMM_WORLD);
 
     MPI_Finalize();
     return 0;

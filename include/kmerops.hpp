@@ -3,6 +3,7 @@
 
 #include <mpi.h>
 #include <omp.h>
+#include <deque>
 #include "kmer.hpp"
 #include "timer.hpp"
 #include "dnaseq.hpp"
@@ -45,8 +46,8 @@ struct KmerSeedStruct{
 typedef std::vector<std::vector<KmerSeedStruct>> KmerSeedBuckets;
 typedef std::vector<std::vector<std::vector<KmerSeedStruct>>> KmerSeedVecs;
 
-std::unique_ptr<KmerSeedBuckets> 
-exchange_kmer(const DnaBuffer& myreads,
+void
+prepare_supermer(const DnaBuffer& myreads,
      MPI_Comm comm,
      int thr_per_task = THREAD_PER_TASK,
      int max_thr_membounded = MAX_THREAD_MEMORY_BOUNDED);
@@ -59,6 +60,119 @@ int GetKmerOwner(const TKmer& kmer, int nprocs);
 
 void print_kmer_histogram(const KmerList& kmerlist, MPI_Comm comm);
 
+class ParallelData{
+    private:
+        int nprocs;
+        int ntasks;
+        int nthr_membounded;
+
+        std::vector<std::vector<std::vector<int>>> destinations;
+        std::vector<std::vector<std::vector<uint32_t>>> lengths;
+        std::vector<std::vector<std::vector<bool>>> supermers;
+        std::vector<std::vector<uint64_t>> readids;
+
+    public:
+        ParallelData(int nprocs, int ntasks, int nthr_membounded) {
+            this->nprocs = nprocs;
+            this->ntasks = ntasks;
+            this->nthr_membounded = nthr_membounded;
+            destinations.resize(nthr_membounded);
+            lengths.resize(nthr_membounded);
+            supermers.resize(nthr_membounded);
+            readids.resize(nthr_membounded);
+
+            for (int i = 0; i < nthr_membounded; i++) {
+                lengths[i].resize(nprocs * ntasks);
+                supermers[i].resize(nprocs * ntasks);
+            }
+        }
+
+        std::vector<std::vector<int>>& get_my_destinations(int tid) {
+            return destinations[tid];
+        }
+
+        std::vector<int>& register_new_destination (int tid, uint64_t readid) {
+            destinations[tid].push_back(std::vector<int>());
+            readids[tid].push_back(readid);
+            return destinations[tid].back();
+        }
+
+        std::vector<std::vector<uint32_t>>& get_my_lengths(int tid) {
+            return lengths[tid];
+        }
+
+        std::vector<std::vector<bool>>& get_my_supermers(int tid) {
+            return supermers[tid];
+        }
+
+        std::vector<uint64_t>& get_my_readids(int tid) {
+            return readids[tid];
+        }
+};
+
+inline int pad_bytes(const int& len) {
+    return (4 - len % 4) * 2;
+}
+
+struct SupermerEncoder{
+    std::vector<std::vector<uint32_t>>& lengths;
+    std::vector<std::vector<bool>>& supermers;
+    int max_supermer_len;
+
+    SupermerEncoder(std::vector<std::vector<uint32_t>>& lengths, 
+            std::vector<std::vector<bool>>& supermers, 
+            int max_supermer_len) : 
+            lengths(lengths), supermers(supermers), max_supermer_len(max_supermer_len) {};
+
+
+    /* std::vector<bool> is a special container that takes 1 bit per element instead of 1 byte */
+    void copy_bits(std::vector<bool>& dst, const uint8_t* src, uint64_t start_pos, int len){
+
+        dst.reserve(len*2);
+
+        for (int i = start_pos; i < start_pos + len; i++) {
+            /* the order is confusing, just make sure we keep it consistent*/
+            bool first_bit = (src[i/4] >> (7 - 2*(i%4))) & 1;
+            bool second_bit = (src[i/4] >> (6 - 2*(i%4))) & 1;
+            dst.push_back(first_bit);
+            dst.push_back(second_bit);
+        }
+
+        /* pad the last byte */
+        int pad = pad_bytes(len);
+        for (int i = 0; i < pad; i++) {
+            dst.push_back(0);
+        }
+
+    }
+
+
+    void encode(const std::vector<int>& dest, const DnaSeq& read){
+        
+        /* initial conditions */
+        uint32_t start_pos = 0;
+        int cnt = 1;
+        int last_dst = dest[0];
+
+        for (int i = 1; i <= dest.size(); i++) {
+
+            if(i == dest.size() || dest[i] != last_dst || cnt == max_supermer_len - KMER_SIZE + 1) {
+                /* encode the supermer */
+                size_t len = cnt + KMER_SIZE - 1;
+                lengths[last_dst].push_back(len);
+                copy_bits(supermers[last_dst], read.data(), start_pos, len);
+
+                /* reset the counter */
+                last_dst = dest[i];
+                cnt = 0;
+                start_pos = i;
+            }
+
+            /* increment the counter */
+            cnt++;
+        }
+    }
+};
 
 class BatchSender
 {
@@ -283,5 +397,32 @@ void ForeachKmerParallel(const DnaBuffer& myreads, std::vector<KmerHandler>& han
         }
     }
 }
+
+struct Minimizer_Deque {
+
+    /* The first item is the hash value, the second one is the position of the minimizer */
+    std::deque<std::pair<uint64_t, int>> deq;
+
+    void remove_minimizer(int pos) {
+        while (!deq.empty() && deq.front().second <= pos) {
+            deq.pop_front();
+        }
+    }
+
+    void insert_minimizer(uint64_t hash, int pos) {
+        while (!deq.empty() && deq.back().first < hash) {
+            deq.pop_back();
+        }
+        deq.push_back(std::make_pair(hash, pos));
+    }
+
+    uint64_t get_current_minimizer() {
+        return deq.front().first;
+    }
+};
+
+int GetMinimizerOwner(const uint64_t& hash, int tot_tasks);
+
+void FindKmerDestinationsParallel(const DnaBuffer& myreads, int nthreads, int tot_tasks, ParallelData& data);
 
 #endif // KMEROPS_H_
