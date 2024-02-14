@@ -15,6 +15,8 @@
 #include "hashfuncs.hpp"
 #include "dnaseq.hpp"
 
+#define MAX_SUPERMER_LEN 256
+
 template <int MLONGS>
 class Mmer
 {

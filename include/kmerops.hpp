@@ -46,12 +46,6 @@ struct KmerSeedStruct{
 typedef std::vector<std::vector<KmerSeedStruct>> KmerSeedBuckets;
 typedef std::vector<std::vector<std::vector<KmerSeedStruct>>> KmerSeedVecs;
 
-void
-prepare_supermer(const DnaBuffer& myreads,
-     MPI_Comm comm,
-     int thr_per_task = THREAD_PER_TASK,
-     int max_thr_membounded = MAX_THREAD_MEMORY_BOUNDED);
-
 std::unique_ptr<KmerList>
 filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, 
      int thr_per_task = THREAD_PER_TASK);
@@ -62,16 +56,17 @@ void print_kmer_histogram(const KmerList& kmerlist, MPI_Comm comm);
 
 class ParallelData{
     private:
-        int nprocs;
-        int ntasks;
-        int nthr_membounded;
 
         std::vector<std::vector<std::vector<int>>> destinations;
-        std::vector<std::vector<std::vector<uint32_t>>> lengths;
-        std::vector<std::vector<std::vector<bool>>> supermers;
         std::vector<std::vector<uint64_t>> readids;
 
     public:
+        int nprocs;
+        int ntasks;
+        int nthr_membounded;
+        std::vector<std::vector<std::vector<uint32_t>>> lengths;
+        std::vector<std::vector<std::vector<uint8_t>>> supermers;
+
         ParallelData(int nprocs, int ntasks, int nthr_membounded) {
             this->nprocs = nprocs;
             this->ntasks = ntasks;
@@ -101,47 +96,63 @@ class ParallelData{
             return lengths[tid];
         }
 
-        std::vector<std::vector<bool>>& get_my_supermers(int tid) {
+        std::vector<std::vector<uint8_t>>& get_my_supermers(int tid) {
             return supermers[tid];
         }
 
         std::vector<uint64_t>& get_my_readids(int tid) {
             return readids[tid];
         }
+
+        size_t get_supermer_cnt(int procid, int taskid) {
+            size_t cnt = 0;
+            for (int i = 0; i < nthr_membounded; i++) {
+                cnt += lengths[i][procid * ntasks + taskid].size();
+            }
+            return cnt;
+        }
 };
+
+ParallelData
+prepare_supermer(const DnaBuffer& myreads,
+     MPI_Comm comm,
+     int thr_per_task = THREAD_PER_TASK,
+     int max_thr_membounded = MAX_THREAD_MEMORY_BOUNDED);
 
 inline int pad_bytes(const int& len) {
     return (4 - len % 4) * 2;
 }
 
+inline int cnt_bytes(const int& len) {
+    return (len + pad_bytes(len)) / 4;
+}
+
 struct SupermerEncoder{
     std::vector<std::vector<uint32_t>>& lengths;
-    std::vector<std::vector<bool>>& supermers;
+    std::vector<std::vector<uint8_t>>& supermers;
     int max_supermer_len;
 
     SupermerEncoder(std::vector<std::vector<uint32_t>>& lengths, 
-            std::vector<std::vector<bool>>& supermers, 
+            std::vector<std::vector<uint8_t>>& supermers, 
             int max_supermer_len) : 
             lengths(lengths), supermers(supermers), max_supermer_len(max_supermer_len) {};
 
 
-    /* std::vector<bool> is a special container that takes 1 bit per element instead of 1 byte */
-    void copy_bits(std::vector<bool>& dst, const uint8_t* src, uint64_t start_pos, int len){
+    // std::vector<bool> is depreciated, std::deque<bool> does not guarantee contiguity
+    // std::bitset has a fixed length, so we use std::vector<uint8_t> instead
+    // maybe we should skip this part and use a bitset for sendbuf directly
+    void copy_bits(std::vector<uint8_t>& dst, const uint8_t* src, uint64_t start_pos, int len){
 
-        dst.reserve(len*2);
+        size_t start = dst.size();
+        dst.resize(start + cnt_bytes(len));
 
-        for (int i = start_pos; i < start_pos + len; i++) {
+        for (int i = 0; i < len; i++) {
             /* the order is confusing, just make sure we keep it consistent*/
-            bool first_bit = (src[i/4] >> (7 - 2*(i%4))) & 1;
-            bool second_bit = (src[i/4] >> (6 - 2*(i%4))) & 1;
-            dst.push_back(first_bit);
-            dst.push_back(second_bit);
-        }
-
-        /* pad the last byte */
-        int pad = pad_bytes(len);
-        for (int i = 0; i < pad; i++) {
-            dst.push_back(0);
+            int loc = i + start_pos;
+            bool first_bit = (src[loc / 4] >> (7 - 2*(loc%4))) & 1;
+            bool second_bit = (src[loc / 4] >> (6 - 2*(loc%4))) & 1;
+            dst[start + i/4] |= (first_bit << (7 - (i%4)*2)) | (second_bit << (6 - (i%4)*2));
+            // need to check if this is correct
         }
 
     }
@@ -163,7 +174,8 @@ struct SupermerEncoder{
                 copy_bits(supermers[last_dst], read.data(), start_pos, len);
 
                 /* reset the counter */
-                last_dst = dest[i];
+                
+                if (i < dest.size()) last_dst = dest[i];
                 cnt = 0;
                 start_pos = i;
             }
@@ -174,178 +186,346 @@ struct SupermerEncoder{
     }
 };
 
-class BatchSender
+/* this is designed to be a universal all to all batch exchanger which supports group */
+class BatchExchanger
 {
+protected:
+    MPI_Comm comm;
+    MPI_Request req;
+
+    int nprocs;
+    int myrank;
+    int ntasks;                     /* number of tasks */
+
+    size_t batch_size;              /* maxium batch size in bytes */
+    size_t send_limit;              /* maxium size of meaningful data in bytes */
+    size_t max_element_size;        /* maxium size of a single element in bytes */
+
+    uint8_t* sendbuf_x;
+    uint8_t* recvbuf_x;
+    uint8_t* sendbuf_y;
+    uint8_t* recvbuf_y;
+
+    virtual bool write_sendbuf(uint8_t* addr, int procid) = 0;
+    virtual void parse_recvbuf(uint8_t* addr, int procid) = 0;
+
+    void write_sendbufs(uint8_t* addr) {
+        bool complete = true;
+        for (int i = 0; i < nprocs; i++) {
+            bool this_complete = write_sendbuf(addr + i * batch_size, i);
+            if (!this_complete) {
+                complete = false;
+            }
+        }
+
+        for(int i = 0; i < nprocs; i++) {
+            addr[(i+1) * batch_size - 1] = complete ? 1 : 0;
+        } 
+    }
+
+    void parse_recvbufs(uint8_t* addr) {
+        for (int i = 0; i < nprocs; i++) {
+            parse_recvbuf(addr + i * batch_size, i);
+        }
+    }
+
+    bool check_complete(uint8_t* recvbuf) {
+        bool flag = true;
+        for (int i = 0; i < nprocs; i++) {
+            if (recvbuf[(i+1) * batch_size - 1] == 0) {
+                flag = false;
+                break;
+            }
+        }
+        return flag;
+    }
+
 public:
     enum Status
     {
         BATCH_NOT_INIT = 0,
         BATCH_SENDING = 1,
         BATCH_DONE = 2
-    };
-
-private:
-    MPI_Comm comm;
-    int nprocs;
-    int myrank;
-
-    Status status;
-    MPI_Request req;
-
-    size_t batch_sz;            /* maxium batch size in bytes */
-    size_t send_limit;          /* maxium size of meaningful data in bytes */
-    size_t ntasks;              /* number of tasks */
-    size_t nthrs;               /* number of threads */
-    size_t* loc_task;           /* the location of the currently sending (destination) task id for processes */
-    size_t* loc_thr;            /* the location of the currently sending (local) thread id for processes */
-    size_t* loc_idx;            /* the location of the next sending item for processors */
-
-    KmerSeedVecs& kmerseeds;    /* the kmers to be sent */
-
-    /* 
-     * two sending / receiving buffers are used to overlap computation and communication
-     * x is always the buffer that is currently sending, y is the one that can be overwritten 
-     */
-    uint8_t* sendtmp_x;
-    uint8_t* recvtmp_x;
-    uint8_t* sendtmp_y;
-    uint8_t* recvtmp_y;
-
-    /* encode and write a kmerseed to the current buffer address */
-    void encode_kmerseed_basic(uint8_t* &addr, KmerSeedStruct& kmerseed) {
-        TKmer kmer = kmerseed.kmer;
-        memcpy(addr, kmer.GetBytes(), TKmer::NBYTES);
-        addr += (sizeof(TKmer));
-    }
-
-    /* 
-     * Write sendbuf for one destination process. 
-     * Returns true if all kmers to this process have been sent.
-     */
-    bool write_sendbuf(uint8_t* addr, int procid);
-
-    /* 
-     * Write sendbuf for all destination processes
-     */
-    void write_sendbufs(uint8_t* addr);
+    } status;
 
 
-public:
-
-    /* we may want to log something */
-    void print_results(Logger &l) {}
-
-    BatchSender(MPI_Comm comm, size_t ntasks, size_t nthrs, size_t batch_size, KmerSeedVecs& kmerseeds) : 
-        comm(comm), batch_sz(batch_size), kmerseeds(kmerseeds), status(BATCH_NOT_INIT), ntasks(ntasks), nthrs(nthrs)
-    {
-        /*
-         * Suppose buffer has a max size of n
-         * n - size(kmer) - size(readid) - size(posinread) - sizeof(char) = max start location
-         * which means that when the pointer is leq this value (and we still have kmers to send), we must continue to encode and write
-         * Or, if the pointer is greater than the value, we cannot store items anymore
-         * the last byte is reserved for the flag, indicating if the current process has sent all its data .
-         * 
-         * What if I have sent all my data but some other processes haven't?
-         * Well, just send random bits. The important thing is that the flag is always set.
-         * The destination process knows how many kmers we're sending, so it won't decode meaningless data.
-         */
-
-        send_limit = batch_sz - sizeof(char) - TKmer::NBYTES - sizeof(char);
-
-        MPI_Comm_size(comm, &nprocs);
-        MPI_Comm_rank(comm, &myrank);
-
-        sendtmp_x = new uint8_t[batch_sz * nprocs];
-        recvtmp_x = new uint8_t[batch_sz * nprocs];
-
-        sendtmp_y = new uint8_t[batch_sz * nprocs];
-        recvtmp_y = new uint8_t[batch_sz * nprocs];
-
-        loc_task = new size_t[nprocs];
-        loc_thr = new size_t[nprocs];
-        loc_idx = new size_t[nprocs];
-        memset(loc_task, 0, sizeof(size_t) * nprocs);
-        memset(loc_thr, 0, sizeof(size_t) * nprocs);
-        memset(loc_idx, 0, sizeof(size_t) * nprocs);
-
-    };
-
-    ~BatchSender()  
-    {
-        if (sendtmp_x != nullptr) delete[] sendtmp_x;
-        if (recvtmp_y != nullptr) delete[] recvtmp_x;
-        if (sendtmp_y != nullptr) delete[] sendtmp_y;
-        if (recvtmp_y != nullptr) delete[] recvtmp_y;
-        if (loc_task != nullptr) delete[] loc_task;
-        if (loc_thr != nullptr) delete[] loc_thr;
-        if (loc_idx != nullptr) delete[] loc_idx;
-
-    }
-
-    Status get_status() { return status; }
-
-    /* initialize the sender, send the first batch of data */
-    void init() {
-        status = BATCH_SENDING;
-        write_sendbufs(sendtmp_x);
-        MPI_Ialltoall(sendtmp_x, batch_sz, MPI_BYTE, recvtmp_x, batch_sz, MPI_BYTE, comm, &req);
-
-    }
-
-    /* 
-     * progress to another round 
-     * returns the receiving buffer from the last round
-     */
-    uint8_t* progress();
-    uint8_t* progress_basic_overlap();
-    uint8_t* progress_basic_a();
-    void progress_basic_b();
-};
-
-
-class BatchReceiver
-{
-    KmerSeedBuckets& kmerseeds;
-    int taskcnt, nprocs;
-    size_t batch_size;
-    size_t send_limit;
-    size_t* expected_recvcnt;           /* the expected total recv counts */
-    size_t* recvcnt;                    /* current recv counts */
-    int* recv_task_id;                  /* current receiving task ids*/
-
-    /* decode the raw bytes into kmer structs */
-    inline void decode_basic(uint8_t* &addr, std::vector<KmerSeedStruct> &kmerseeds) {
-        TKmer kmer((void*)addr);                
-        kmerseeds.emplace_back(kmer);
-        addr += TKmer::NBYTES;
-    }
-
-
-public:
-    BatchReceiver(KmerSeedBuckets& kmerseeds,  int taskcnt, int nprocs, size_t* expected_recvcnt, size_t batch_size) : 
-        kmerseeds(kmerseeds), taskcnt(taskcnt), nprocs(nprocs), expected_recvcnt(expected_recvcnt), batch_size(batch_size)
-        {
-            send_limit = batch_size - sizeof(char) - TKmer::NBYTES - sizeof(char);
-            recvcnt = new size_t[nprocs];
-            recv_task_id = new int[nprocs];
-            memset(recvcnt, 0, sizeof(size_t) * nprocs);
-            memset(recv_task_id, 0, sizeof(int) * nprocs);
+    void initialize() {
+        if (status != BATCH_NOT_INIT) {
+            return;
         }
 
-    ~BatchReceiver()
-    {
-        
-        delete[] recvcnt;
-        delete[] recv_task_id;
-        
+        sendbuf_x = new uint8_t[batch_size * nprocs];
+        recvbuf_x = new uint8_t[batch_size * nprocs];
+        sendbuf_y = new uint8_t[batch_size * nprocs];
+        recvbuf_y = new uint8_t[batch_size * nprocs];
+
+        status = BATCH_SENDING;
+        write_sendbufs(sendbuf_y);
+        MPI_Ialltoall(sendbuf_y, batch_size, MPI_BYTE, recvbuf_y, batch_size, MPI_BYTE, comm, &req);
     }
 
-    /*
-     * Receive data from the sender.
-     * Partition them into buckets
-     */
-    void receive(uint8_t* recvbuf);
+
+    void progress() {
+        if (status != BATCH_SENDING) {
+            return;
+        }
+
+        /* x is the buffer we can use to write and parse */
+        write_sendbufs(sendbuf_x);
+
+        MPI_Wait(&req, MPI_STATUS_IGNORE);
+
+        std::swap(sendbuf_x, sendbuf_y);
+        std::swap(recvbuf_x, recvbuf_y);
+
+        if (check_complete(recvbuf_x)) {
+            status = BATCH_DONE;
+            parse_recvbufs(recvbuf_x);
+            return;
+        }
+
+        MPI_Ialltoall(sendbuf_y, batch_size, MPI_BYTE, recvbuf_y, batch_size, MPI_BYTE, comm, &req);
+
+        parse_recvbufs(recvbuf_x);
+    
+    }
+
+    BatchExchanger(MPI_Comm comm, size_t ntasks, size_t batch_size, size_t max_element_size) : 
+        comm(comm), batch_size(batch_size), status(BATCH_NOT_INIT), ntasks(ntasks), max_element_size(max_element_size)
+    {
+        MPI_Comm_size(comm, &nprocs);
+        MPI_Comm_rank(comm, &myrank);
+        send_limit = batch_size - sizeof(char) - max_element_size;
+
+    };
+
+    ~BatchExchanger()  
+    {
+        delete[] sendbuf_x;
+        delete[] recvbuf_x;
+        delete[] sendbuf_y;
+        delete[] recvbuf_y;
+    }
 };
+
+class LengthExchanger : public BatchExchanger
+{
+private:
+    int nthr_membounded;
+    std::vector<std::vector<std::vector<uint32_t>>>& lengths;
+    
+    std::vector<size_t> current_taskid;
+    std::vector<size_t> current_tid;
+    std::vector<size_t> current_idx;
+
+    bool write_sendbuf(uint8_t* addr, int procid) override {
+        size_t taskid = current_taskid[procid];
+        size_t tid = current_tid[procid];
+        size_t idx = current_idx[procid];
+
+        size_t cnt = 0;
+        while (cnt <= send_limit && taskid < (procid + 1) * ntasks ) {
+            size_t n = lengths[tid][taskid].size();
+            // need to check if this +1 is good
+            size_t n_to_send = std::min(n - idx, (send_limit - cnt) / sizeof(uint32_t) + 1);
+            memcpy(addr + cnt, lengths[tid][taskid].data() + idx, n_to_send * sizeof(uint32_t));
+            cnt += n_to_send * sizeof(uint32_t);
+            idx += n_to_send;
+
+            if (idx == n) {
+                tid++;
+                idx = 0;
+                if(tid == nthr_membounded) {
+                    taskid++;
+                    tid = 0;
+                }
+            }
+        }
+
+        current_taskid[procid] = taskid;
+        current_tid[procid] = tid;
+        current_idx[procid] = idx;
+
+        return taskid == (procid + 1) * ntasks;
+    }
+
+    std::vector<size_t>& recv_cnt;
+    std::vector<std::vector<uint32_t>>& recvbuf;
+    std::vector<size_t> recv_idx;
+    std::vector<size_t> recv_taskid;
+    // Note that here the task id is the "local" task id, which starts from 0 for each process
+
+    void parse_recvbuf(uint8_t* addr, int procid) override {
+        size_t taskid = recv_taskid[procid];
+        size_t idx = recv_idx[procid];
+
+        if (taskid == ntasks) {
+            return;
+        }
+
+        size_t cnt = 0;
+        while (cnt <= send_limit && taskid < ntasks) {
+            size_t n_to_recv = std::min(recv_cnt[taskid + procid * ntasks] - idx, (send_limit - cnt) / sizeof(uint32_t) + 1);
+            memcpy(recvbuf[taskid + procid * ntasks].data() + idx, addr + cnt, n_to_recv * sizeof(uint32_t));
+            cnt += n_to_recv * sizeof(uint32_t);
+            idx += n_to_recv;
+            if (idx == recv_cnt[taskid + procid * ntasks]) {
+                taskid++;
+                idx = 0;
+            }
+        }
+
+        recv_taskid[procid] = taskid;
+        recv_idx[procid] = idx;
+
+    }
+
+public:
+    LengthExchanger(MPI_Comm comm, 
+                size_t ntasks, 
+                size_t batch_size, 
+                size_t max_element_size, 
+                int nthr_membounded, 
+                std::vector<std::vector<std::vector<uint32_t>>>& lengths,
+                std::vector<size_t>& recv_cnt,
+                std::vector<std::vector<uint32_t>>& recvbuf) : 
+        BatchExchanger(comm, ntasks, batch_size, max_element_size), 
+        nthr_membounded(nthr_membounded), lengths(lengths), recv_cnt(recv_cnt), recvbuf(recvbuf) {
+            current_taskid.resize(nprocs);
+            for (int i = 0; i < nprocs; i++) {
+                current_taskid[i] = ntasks * i;
+            }
+            current_tid.resize(nprocs, 0);
+            current_idx.resize(nprocs, 0);
+
+            recv_idx.resize(nprocs, 0);
+            recv_taskid.resize(nprocs, 0);
+            recvbuf.resize(nprocs * ntasks);
+            for (int i = 0; i < nprocs * ntasks; i++) {
+                recvbuf[i].resize(recv_cnt[i], 0);
+            }
+        }
+};
+
+
+class SupermerExchanger : public BatchExchanger
+{
+private:
+    int nthr_membounded;
+    std::vector<std::vector<std::vector<uint32_t>>>& lengths;
+    std::vector<std::vector<std::vector<uint8_t>>>& supermers;
+    std::vector<size_t> current_taskid;
+    std::vector<size_t> current_tid;
+    std::vector<size_t> current_idx;
+    std::vector<size_t> current_supermer_idx;
+
+    bool write_sendbuf(uint8_t* addr, int procid) override {
+        size_t taskid = current_taskid[procid];
+        size_t tid = current_tid[procid];
+        size_t idx = current_idx[procid];
+        size_t supermer_idx = current_supermer_idx[procid];
+
+        size_t cnt = 0;
+        while (cnt <= send_limit && taskid < (procid + 1) * ntasks ) {
+
+            if(idx >= lengths[tid][taskid].size()) {
+                tid++;
+                idx = 0;
+                supermer_idx = 0;
+                if(tid == nthr_membounded) {
+                    taskid++;
+                    tid = 0;
+                }
+                continue;
+            }
+
+            size_t len_bytes = cnt_bytes(lengths[tid][taskid][idx]);
+            memcpy(addr + cnt, supermers[tid][taskid].data() + supermer_idx, len_bytes);
+            cnt += len_bytes;
+            supermer_idx += len_bytes;
+            idx++;
+
+        }
+
+        current_taskid[procid] = taskid;
+        current_tid[procid] = tid;
+        current_idx[procid] = idx;
+        current_supermer_idx[procid] = supermer_idx;
+
+        return taskid == (procid + 1) * ntasks;
+    }
+
+    std::vector<std::vector<uint32_t>>& recv_length;
+    std::vector<size_t> recv_idx;
+    std::vector<size_t> recv_taskid;
+    std::vector<size_t> recv_cnt;
+    KmerSeedBuckets& bucket;
+
+    void parse_recvbuf(uint8_t* addr, int procid) override {
+        size_t taskid = recv_taskid[procid];
+        size_t idx = recv_idx[procid];
+
+        if (taskid == ntasks) {
+            return;
+        }
+
+        size_t cnt = 0;
+        while (cnt <= send_limit && taskid < ntasks) {
+            if (idx >= recv_cnt[procid * ntasks + taskid]) {
+                taskid++;
+                idx = 0;
+                continue;
+            }
+            size_t len = recv_length[procid * ntasks + taskid][idx];
+            size_t len_bytes = cnt_bytes(len);
+
+            auto seq = DnaSeq(len, addr+cnt);
+            std::vector<TKmer> repmers = TKmer::GetRepKmers(seq);
+            for (auto meritr = repmers.begin(); meritr != repmers.end(); ++meritr) {
+                bucket[taskid].emplace_back(*meritr);
+            }
+
+            // memcpy(bucket[procid * ntasks + taskid].data() + idx, addr + cnt, len_bytes);
+            cnt += len_bytes;
+            idx++;
+        }
+
+        recv_taskid[procid] = taskid;
+        recv_idx[procid] = idx;
+
+    }
+
+
+public:
+    SupermerExchanger(MPI_Comm comm, 
+                size_t ntasks, 
+                size_t batch_size, 
+                size_t max_element_size, 
+                int nthr_membounded, 
+                std::vector<std::vector<std::vector<uint32_t>>>& lengths,
+                std::vector<std::vector<std::vector<uint8_t>>>& supermers,
+                std::vector<size_t>& recv_cnt,
+                std::vector<std::vector<uint32_t>>& recv_length,
+                KmerSeedBuckets& bucket) : 
+        BatchExchanger(comm, ntasks, batch_size, max_element_size), 
+        nthr_membounded(nthr_membounded), lengths(lengths), supermers(supermers), recv_cnt(recv_cnt), recv_length(recv_length), bucket(bucket){
+            current_taskid.resize(nprocs);
+            for (int i = 0; i < nprocs; i++) {
+                current_taskid[i] = ntasks * i;
+            }
+            current_tid.resize(nprocs, 0);
+            current_idx.resize(nprocs, 0);
+            current_supermer_idx.resize(nprocs, 0);
+
+            recv_idx.resize(nprocs, 0);
+            recv_taskid.resize(nprocs, 0);
+
+        }
+
+};
+
+std::unique_ptr<KmerSeedBuckets> exchange_supermer(ParallelData& data, MPI_Comm comm);
+
 
 struct KmerParserHandler
 {

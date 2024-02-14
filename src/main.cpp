@@ -68,14 +68,18 @@ int main(int argc, char **argv){
 
     /* start kmer counting */
     timer.start();
-    prepare_supermer(mydna, MPI_COMM_WORLD);
+    auto data = prepare_supermer(mydna, MPI_COMM_WORLD);
     timer.stop_and_log("prepare_supermer");
 
     timer.start();
-    // auto kmerlist = filter_kmer(bucket);
+    auto bucket = exchange_supermer(data, MPI_COMM_WORLD);
+    timer.stop_and_log("exchange_supermer");
+
+    timer.start();
+    auto kmerlist = filter_kmer(bucket);
     timer.stop_and_log("filter_kmer");
 
-    // print_kmer_histogram(*kmerlist, MPI_COMM_WORLD);
+    print_kmer_histogram(*kmerlist, MPI_COMM_WORLD);
 
     MPI_Finalize();
     return 0;

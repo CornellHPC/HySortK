@@ -72,7 +72,8 @@ private:
 template <int NLONGS>
 std::ostream& operator<<(std::ostream& os, const Kmer<NLONGS>& kmer)
 {
-    os << KMER_SIZE << "-mer(" << kmer.GetString() << ")";
+    // os << KMER_SIZE << "-mer(" << kmer.GetString() << ")";
+    os << kmer.GetString();
     return os;
 }
 
