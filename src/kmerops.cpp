@@ -164,6 +164,11 @@ std::unique_ptr<KmerSeedBuckets> exchange_supermer(ParallelData& data, MPI_Comm 
 
     std::vector<std::vector<uint32_t>> length;
 
+#if LOG_LEVEL >= 3
+Timer timer(comm);
+timer.start();
+#endif
+
     // Exchange the lengths
     LengthExchanger length_exchanger(comm, ntasks, MAX_SEND_BATCH, sizeof(uint32_t), data.nthr_membounded, data.lengths, recv_counts, length);
     length_exchanger.initialize();
@@ -171,6 +176,11 @@ std::unique_ptr<KmerSeedBuckets> exchange_supermer(ParallelData& data, MPI_Comm 
     while(length_exchanger.status != LengthExchanger::Status::BATCH_DONE) {
         length_exchanger.progress();
     }
+#if LOG_LEVEL >= 3
+timer.stop_and_log("Length exchange");
+length_exchanger.print_stats();
+timer.start();
+#endif
 
 #if LOG_LEVEL >= 4
     for (int i = 0; i < length.size(); i++) {
@@ -193,6 +203,11 @@ std::unique_ptr<KmerSeedBuckets> exchange_supermer(ParallelData& data, MPI_Comm 
     {
         supermer_exchanger.progress();
     }
+
+#if LOG_LEVEL >= 3
+timer.stop_and_log("Supermer exchange");
+supermer_exchanger.print_stats();
+#endif
     
 
     return std::unique_ptr<KmerSeedBuckets>(bucket);
@@ -252,15 +267,6 @@ filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, int thr_per_task)
     }
     timer.stop_and_log("Shared memory parallel K-mer sorting");
     print_mem_log(nprocs, myrank, "After Sorting");
-
-    for(int i = 0; i < ntasks; i++) {
-        logger() << "task " << i << " ";
-        for (int j = 0; j < task_seedcnt[i]; j++) {
-            logger() << (*recv_kmerseeds)[i][j].kmer << " ";
-        }
-        logger() << std::endl;
-    }
-    logger.flush("Sorted K-mer seeds");
 
     timer.start();
     #pragma omp parallel

@@ -196,6 +196,8 @@ protected:
     int nprocs;
     int myrank;
     int ntasks;                     /* number of tasks */
+    int round;
+    double t1, t2, t3, t4;
 
     size_t batch_size;              /* maxium batch size in bytes */
     size_t send_limit;              /* maxium size of meaningful data in bytes */
@@ -223,7 +225,7 @@ protected:
         } 
     }
 
-    void parse_recvbufs(uint8_t* addr) {
+    virtual void parse_recvbufs(uint8_t* addr) {
         for (int i = 0; i < nprocs; i++) {
             parse_recvbuf(addr + i * batch_size, i);
         }
@@ -269,11 +271,28 @@ public:
         if (status != BATCH_SENDING) {
             return;
         }
+        round++;
 
         /* x is the buffer we can use to write and parse */
+
+#if LOG_LEVEL >= 3
+        Timer timer(comm);
+        timer.start();
+#endif
+
         write_sendbufs(sendbuf_x);
 
+#if LOG_LEVEL >= 3
+        timer.stop_and_log("write_sendbufs");
+        timer.start();
+#endif
+
         MPI_Wait(&req, MPI_STATUS_IGNORE);
+
+#if LOG_LEVEL >= 3
+        timer.stop_and_log("MPI_Wait");
+        timer.start();
+#endif
 
         std::swap(sendbuf_x, sendbuf_y);
         std::swap(recvbuf_x, recvbuf_y);
@@ -286,13 +305,30 @@ public:
 
         MPI_Ialltoall(sendbuf_y, batch_size, MPI_BYTE, recvbuf_y, batch_size, MPI_BYTE, comm, &req);
 
+#if LOG_LEVEL >= 3
+        timer.stop_and_log("MPI_Ialltoall");
+        timer.start();
+#endif
+
         parse_recvbufs(recvbuf_x);
+
+#if LOG_LEVEL >= 3
+        timer.stop_and_log("parse_recvbufs");
+#endif
+
     
+    }
+
+    void print_stats(){
+        Logger logger(comm);
+        logger() << "Round: "<< round << std::endl;
+        logger.flush("Print Stats");
     }
 
     BatchExchanger(MPI_Comm comm, size_t ntasks, size_t batch_size, size_t max_element_size) : 
         comm(comm), batch_size(batch_size), status(BATCH_NOT_INIT), ntasks(ntasks), max_element_size(max_element_size)
     {
+        round = 0;
         MPI_Comm_size(comm, &nprocs);
         MPI_Comm_rank(comm, &myrank);
         send_limit = batch_size - sizeof(char) - max_element_size;
@@ -408,6 +444,61 @@ public:
 };
 
 
+
+struct BucketAssistant{
+    int ntasks, nprocs;
+    KmerSeedBuckets& bucket;
+    std::vector<std::vector<size_t>> recv_base;
+    std::vector<std::vector<size_t>> current_recv;
+
+
+    BucketAssistant(int ntasks, int nprocs, KmerSeedBuckets& bucket, std::vector<std::vector<uint32_t>>& lengths) : 
+        ntasks(ntasks), nprocs(nprocs), bucket(bucket){
+        std::vector<std::vector<size_t>> recv_cnt;
+
+        recv_cnt.resize(nprocs);
+        recv_base.resize(nprocs);
+        current_recv.resize(nprocs);
+
+        // Turn the lengths into the actual counts
+        for(int i = 0; i < nprocs; i++) {
+            recv_cnt[i].resize(ntasks, 0);
+            for(int j = 0; j < ntasks; j++) {
+                recv_cnt[i][j] = std::accumulate(lengths[i * ntasks + j].begin(), lengths[i * ntasks + j].end(), 0) - ( KMER_SIZE - 1 ) * lengths[i * ntasks + j].size();
+            }
+        }
+
+        recv_base[0].resize(ntasks, 0);
+        for(int i = 1; i < nprocs; i++) {
+            recv_base[i].resize(ntasks, 0);
+            for(int j = 0; j < ntasks; j++) {
+                recv_base[i][j] = recv_base[i-1][j] + recv_cnt[i-1][j];
+            }
+        }
+
+        for(int i = 0; i < nprocs; i++) {
+            current_recv[i].resize(ntasks, 0);
+        }
+
+        for(int i = 0; i < ntasks; i++) {
+            bucket[i].resize(recv_base[nprocs-1][i] + recv_cnt[nprocs-1][i]);
+        }
+    }    
+    
+    inline void insert(const int& procid, const int& taskid, const DnaSeq& seq) {
+        size_t len = seq.size() - KMER_SIZE + 1;
+
+        auto repmers = TKmer::GetRepKmers(seq);
+        size_t base = recv_base[procid][taskid] + current_recv[procid][taskid];
+
+        for (int i = 0; i < len; i++) {
+            bucket[taskid][base + i] = KmerSeedStruct(repmers[i]);
+        }
+
+        current_recv[procid][taskid] += len;
+    }
+};
+
 class SupermerExchanger : public BatchExchanger
 {
 private:
@@ -459,7 +550,15 @@ private:
     std::vector<size_t> recv_idx;
     std::vector<size_t> recv_taskid;
     std::vector<size_t> recv_cnt;
-    KmerSeedBuckets& bucket;
+    BucketAssistant assistant;
+
+    void parse_recvbufs(uint8_t* addr) {
+        #pragma omp parallel for num_threads(MAX_THREAD_MEMORY_BOUNDED)
+        for (int i = 0; i < nprocs; i++) {
+            parse_recvbuf(addr + i * batch_size, i);
+        }
+    }
+
 
     void parse_recvbuf(uint8_t* addr, int procid) override {
         size_t taskid = recv_taskid[procid];
@@ -480,10 +579,7 @@ private:
             size_t len_bytes = cnt_bytes(len);
 
             auto seq = DnaSeq(len, addr+cnt);
-            std::vector<TKmer> repmers = TKmer::GetRepKmers(seq);
-            for (auto meritr = repmers.begin(); meritr != repmers.end(); ++meritr) {
-                bucket[taskid].emplace_back(*meritr);
-            }
+            assistant.insert(procid, taskid, seq);
 
             // memcpy(bucket[procid * ntasks + taskid].data() + idx, addr + cnt, len_bytes);
             cnt += len_bytes;
@@ -508,7 +604,8 @@ public:
                 std::vector<std::vector<uint32_t>>& recv_length,
                 KmerSeedBuckets& bucket) : 
         BatchExchanger(comm, ntasks, batch_size, max_element_size), 
-        nthr_membounded(nthr_membounded), lengths(lengths), supermers(supermers), recv_cnt(recv_cnt), recv_length(recv_length), bucket(bucket){
+        nthr_membounded(nthr_membounded), lengths(lengths), supermers(supermers), recv_cnt(recv_cnt), recv_length(recv_length), 
+        assistant(ntasks, nprocs, bucket, recv_length) {
             current_taskid.resize(nprocs);
             for (int i = 0; i < nprocs; i++) {
                 current_taskid[i] = ntasks * i;
