@@ -18,7 +18,7 @@ class Logger
 
 public:
     Logger(MPI_Comm comm);
-    void flush(char const *label);
+    void flush(char const *label, int prank=-1);
     void flush(std::ostringstream& ss);
     void flush(std::ostringstream& ss, int rank);
     std::ostringstream& operator()() { return *logstream; }

@@ -20,7 +20,7 @@ typedef std::array<ReadId,    UPPER_KMER_FREQ> READIDS;
 typedef std::tuple<TKmer, int> KmerListEntry;
 typedef std::vector<KmerListEntry> KmerList;
 
-#define MAX_THREAD_MEMORY_BOUNDED 8 
+#define MAX_THREAD_MEMORY_BOUNDED 16
 
 struct KmerSeedStruct{
     TKmer kmer;      
@@ -322,7 +322,7 @@ public:
     void print_stats(){
         Logger logger(comm);
         logger() << "Round: "<< round << std::endl;
-        logger.flush("Print Stats");
+        logger.flush("Print Stats", 0);
     }
 
     BatchExchanger(MPI_Comm comm, size_t ntasks, size_t batch_size, size_t max_element_size) : 

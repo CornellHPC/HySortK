@@ -87,7 +87,7 @@ void Logger::flush(std::ostringstream& ss, int rank)
     MPI_Barrier(comm);
 }
 
-void Logger::flush(char const *label)
+void Logger::flush(char const *label, int prank)
 {
     int myrank;
     int nprocs;
@@ -126,12 +126,18 @@ void Logger::flush(char const *label)
 
         char const *buf = recvbuf.data();
 
-        for (int i = 0; i < nprocs; ++i)
-        {
-            std::cout << "rank[" << i+1 << "/" << nprocs << "] :: " << std::string(buf + displs[i], recvcnt[i]) << "\n";
+        if (prank == -1) {
+            for (int i = 0; i < nprocs; ++i)
+            {
+                std::cout << "rank[" << i+1 << "/" << nprocs << "] :: " << std::string(buf + displs[i], recvcnt[i]) << "\n";
+            }
+            std::cout << std::endl;
+        } else {
+            std::cout << "rank[-/-] :: " << std::string(buf + displs[0], recvcnt[0]) << "\n\n";
         }
-        std::cout << std::endl;
     }
 
     MPI_Barrier(comm);
 }
+
+

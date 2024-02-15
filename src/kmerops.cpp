@@ -48,9 +48,9 @@ prepare_supermer(const DnaBuffer& myreads,
 
     #if LOG_LEVEL >= 2
     logger() << ntasks << " \t (thread per task: " << thr_per_task << ")";
-    logger.flush("Task num:");
+    logger.flush("Task num:", 0);
     logger() << nthr_membounded ;
-    logger.flush("Thread count used for memory bounded operations:");
+    logger.flush("Thread count used for memory bounded operations:", 0);
     #endif
 
     #if LOG_LEVEL >= 3
@@ -73,19 +73,6 @@ prepare_supermer(const DnaBuffer& myreads,
     timer.start();
     #endif
 
-    /* log output for debugging */
-#if LOG_LEVEL >= 4
-    auto dest = data.get_my_destinations(0);
-
-    for(int i = 0; i < dest.size(); i++) {
-        for (int j = 0; j < dest[i].size(); j++) {
-            logger() << dest[i][j] << " ";
-        }
-        logger() << std::endl;
-    }
-    logger.flush("Kmer destinations");
-#endif
-
     /* encode the supermers */
     #pragma omp parallel num_threads(nthr_membounded)
     {
@@ -103,38 +90,8 @@ prepare_supermer(const DnaBuffer& myreads,
 
     }
 
-#if LOG_LEVEL >= 4
-    /* log output for debugging */
-    for (int tid = 0; tid < nthr_membounded; tid++) {
-        std::vector<size_t> cur_locs;
-        cur_locs.resize(nprocs * ntasks, 0);
-
-        auto& lengths = data.get_my_lengths(tid);
-        auto& supermers = data.get_my_supermers(tid);
-        auto& destinations = data.get_my_destinations(tid);
-        auto& readids = data.get_my_readids(tid);
-
-        for(size_t i = 0; i < nprocs * ntasks; i++) {
-
-            for(size_t j = 0; j < lengths[i].size(); j++) {
-                logger() << "dst: "<< i << " length: " << lengths[i][j] << " ";
-                logger() << "supermer: ";
-                
-                for(size_t k = 0; k < lengths[i][j]; k++) {
-                    bool a = supermers[i][cur_locs[i] + k / 4] & (1 << (7 - (k%4)*2));
-                    bool b = supermers[i][cur_locs[i] + k / 4] & (1 << (6 - (k%4)*2));
-                    logger() << ((a && b) ? "T" : (a ?  "G" : (b ? "C" : "A")));
-                    /* 0 means A, 1 means C, 2 means G, and 3 means T. */
-                }   
-
-                logger() << std::endl;
-
-                cur_locs[i] += cnt_bytes(lengths[i][j]);
-            }
-
-        }
-    }
-    logger.flush("Supermer encoding");
+#if LOG_LEVEL >= 3
+    timer.stop_and_log("Supermer encoding");
 #endif
 
     return data;
@@ -176,22 +133,11 @@ timer.start();
     while(length_exchanger.status != LengthExchanger::Status::BATCH_DONE) {
         length_exchanger.progress();
     }
+
 #if LOG_LEVEL >= 3
 timer.stop_and_log("Length exchange");
 length_exchanger.print_stats();
 timer.start();
-#endif
-
-#if LOG_LEVEL >= 4
-    for (int i = 0; i < length.size(); i++) {
-        logger() << "recvbuf " << i << std::endl;
-        for (int j = 0; j < length[i].size(); j++) {
-            logger() << length[i][j] << " ";
-        }
-        logger() << std::endl;
-    }
-    
-    logger.flush("Received lengths");
 #endif
 
     KmerSeedBuckets* bucket = new KmerSeedBuckets(ntasks);
