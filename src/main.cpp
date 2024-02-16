@@ -32,18 +32,16 @@ int main(int argc, char **argv){
     MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
 
     if (myrank == 0){
-        std::cerr << "Compiling Parameters:" << std::endl;
-        std::cerr << "      KMER_SIZE: " << KMER_SIZE << std::endl;
-        std::cerr << "      MINIMIZER_SIZE: " << MINIMIZER_SIZE << std::endl;
-        std::cerr << "      THREAD_PER_TASK: " << THREAD_PER_TASK << std::endl;
-        std::cerr << "      LOWER_KMER_FREQ: " << LOWER_KMER_FREQ << std::endl;
-        std::cerr << "      UPPER_KMER_FREQ: " << UPPER_KMER_FREQ << std::endl;
-        std::cerr << "      LOGGING_LEVEL: " << LOG_LEVEL << std::endl;
-        std::cerr << "      DEBUG: " << DEBUG << std::endl;
-        std::cerr << "      OVERLAP_LEVEL: " << OVERLAP_LEVEL << std::endl << std::endl;
-    }
+        log() << "Compiling Parameters:" << std::endl;
+        log() << "      KMER_SIZE: " << KMER_SIZE << std::endl;
+        log() << "      MINIMIZER_SIZE: " << MINIMIZER_SIZE << std::endl;
+        log() << "      THREAD_PER_TASK: " << THREAD_PER_TASK << std::endl;
+        log() << "      MAX_THREAD_MEMORY_BOUNDED: " << MAX_THREAD_MEMORY_BOUNDED << std::endl;
+        log() << "      LOWER_KMER_FREQ: " << LOWER_KMER_FREQ << std::endl;
+        log() << "      UPPER_KMER_FREQ: " << UPPER_KMER_FREQ << std::endl;
+        log() << "      LOGGING_LEVEL: " << LOG_LEVEL << std::endl;
+        log() << "      DEBUG: " << DEBUG << std::endl<< std::endl;
 
-    if (myrank == 0){
         log() << "Runtime Parameters:" << std::endl;
         log() << "      Fasta File: " << std::quoted(fasta_fname)<< std::endl;
         log() << "      Nprocs:" << nprocs << std::endl;

@@ -4,6 +4,7 @@
 #include <mpi.h>
 #include <omp.h>
 #include <deque>
+#include <cmath>
 #include "kmer.hpp"
 #include "timer.hpp"
 #include "dnaseq.hpp"
@@ -19,8 +20,6 @@ typedef std::array<ReadId,    UPPER_KMER_FREQ> READIDS;
 
 typedef std::tuple<TKmer, int> KmerListEntry;
 typedef std::vector<KmerListEntry> KmerList;
-
-#define MAX_THREAD_MEMORY_BOUNDED 16
 
 struct KmerSeedStruct{
     TKmer kmer;      
@@ -152,7 +151,6 @@ struct SupermerEncoder{
             bool first_bit = (src[loc / 4] >> (7 - 2*(loc%4))) & 1;
             bool second_bit = (src[loc / 4] >> (6 - 2*(loc%4))) & 1;
             dst[start + i/4] |= (first_bit << (7 - (i%4)*2)) | (second_bit << (6 - (i%4)*2));
-            // need to check if this is correct
         }
 
     }
@@ -319,7 +317,7 @@ public:
     
     }
 
-    void print_stats(){
+    virtual void print_stats(){
         Logger logger(comm);
         logger() << "Round: "<< round << std::endl;
         logger.flush("Print Stats", 0);
@@ -510,6 +508,8 @@ private:
     std::vector<size_t> current_idx;
     std::vector<size_t> current_supermer_idx;
 
+    std::vector<size_t> _bytes_sent;
+
     bool write_sendbuf(uint8_t* addr, int procid) override {
         size_t taskid = current_taskid[procid];
         size_t tid = current_tid[procid];
@@ -589,6 +589,8 @@ private:
         recv_taskid[procid] = taskid;
         recv_idx[procid] = idx;
 
+        _bytes_sent[procid] += cnt;
+
     }
 
 
@@ -616,8 +618,71 @@ public:
 
             recv_idx.resize(nprocs, 0);
             recv_taskid.resize(nprocs, 0);
+            
+            _bytes_sent.resize(nprocs, 0);
 
         }
+
+    void print_stats() override {
+        Logger logger(comm);
+        
+        // Rank 0 Gather the bytes sent by each process
+        std::vector<size_t> all_bytes_sent(nprocs * nprocs, 0);
+        MPI_Gather(_bytes_sent.data(), nprocs, MPI_UNSIGNED_LONG, all_bytes_sent.data(), nprocs, MPI_UNSIGNED_LONG, 0, comm);
+
+        // Each Rank Calculate its own std deviation
+        size_t mean = 0;
+        size_t std_dev = 0;
+        for(int i = 0; i < nprocs; i++) {
+            mean += _bytes_sent[i];
+        }
+        mean /= nprocs;
+        for (int i = 0; i < nprocs; i++) {
+            std_dev += (_bytes_sent[i] - mean) * (_bytes_sent[i] - mean);
+        }
+        std_dev = std::sqrt(std_dev / nprocs);
+        logger() << "mean: " << mean << " \t\t std_dev: " << std_dev << " \t\t ratio: " << (double)std_dev / mean  ;
+        logger.flush("Sending Stats in Bytes");
+
+        // Calculate the std deviation for all ranks sending
+        if(myrank == 0) {
+            size_t mean_all = 0;
+            size_t std_dev_all = 0;
+            for(int i = 0; i < nprocs * nprocs; i++) {
+                mean_all += all_bytes_sent[i];
+            }
+            mean_all /= nprocs * nprocs;
+            for (int i = 0; i < nprocs * nprocs; i++) {
+                std_dev_all += (all_bytes_sent[i] - mean_all) * (all_bytes_sent[i] - mean_all);
+            }
+            std_dev_all = std::sqrt(std_dev_all / (nprocs * nprocs));
+            logger() << "mean: " << mean_all << " \t\t std_dev: " << std_dev_all << " \t\t ratio: " << (double)std_dev_all / mean_all  ;
+        }
+        logger.flush("Overall Sending Stats in bytes", 0);
+
+        // Calculate the average length of the supermers
+        size_t total_supermer_len = 0;
+        size_t total_supermer_cnt = 0;
+        for (int i = 0; i < lengths.size(); i++) {
+            for (int j = 0; j < lengths[i].size(); j++) {
+                total_supermer_len += std::accumulate(lengths[i][j].begin(), lengths[i][j].end(), 0);
+                total_supermer_cnt += lengths[i][j].size();
+            }
+        }
+
+        // Rank 0 gather the total supermer length and count
+        size_t all_supermer_len = 0;
+        size_t all_supermer_cnt = 0;
+        MPI_Reduce(&total_supermer_len, &all_supermer_len, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, comm);
+        MPI_Reduce(&total_supermer_cnt, &all_supermer_cnt, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, comm);
+
+        logger() << "Average supermer length: " << (double)all_supermer_len / all_supermer_cnt;
+        logger.flush("Supermer Stats", 0);
+
+        logger()<< "Round: "<< round << std::endl;
+        logger.flush("Round Stats", 0);
+    
+    }
 
 };
 

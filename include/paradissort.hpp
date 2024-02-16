@@ -1,7 +1,7 @@
 #ifndef PARADIS_SORT_HPP
 #define PARADIS_SORT_HPP
 
-/* This code is taken from github. it is working, maybe we should rewrite it. */
+/* This code is taken from github https://github.com/odanivan/simple_paradis/tree/master. it is working, maybe we should rewrite it. */
 
 #include <omp.h>
 #include <algorithm>
@@ -211,14 +211,8 @@ inline void radix_sort_par(T *s, T *t, T *begin_itr, long long processes = 1) {
 template <typename T, size_t sz> void sort(T *begin, T *end, size_t thread_count) {
   
   radix_sort_par<sz - 1>(begin, end, begin, thread_count);
-// yfli: this is absolutely experimental, wrong for most cases
 
 }
-
-// template <> void sort<float>(float *begin, float *end, size_t thread_count) {}
-
-// template <>
-// void sort<double>(double *begin, double *end, size_t thread_count) {}
 
 } // namespace paradis
 
