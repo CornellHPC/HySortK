@@ -158,6 +158,8 @@ struct SupermerEncoder{
 
     void encode(const std::vector<int>& dest, const DnaSeq& read){
         
+        if (read.size() < KMER_SIZE) return;
+
         /* initial conditions */
         uint32_t start_pos = 0;
         int cnt = 1;
