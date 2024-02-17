@@ -4,5 +4,6 @@ ukmerc
 *.log
 *.out
 *.map
+bin/ .
 
 testdata/
