@@ -224,11 +224,17 @@ filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, int thr_per_task)
     timer.start();
 #endif
 
+    // distribute available threads to each task in according to number of tasks
+ //   int nthreads = omp_get_max_threads();
+  //  int total_seeds = std::accumulate(task_seedcnt, task_seedcnt + ntasks, (uint64_t)0);
+
+
     /* sort the receiving vectors */
     #pragma omp parallel 
     {
 
         int tid = omp_get_thread_num();
+//        int tasknum = std::max(1, (int)std::round((double)task_seedcnt[tid] * nthreads / total_seeds));
         paradis::sort<KmerSeedStruct, TKmer::NBYTES>((*recv_kmerseeds)[tid].data(), (*recv_kmerseeds)[tid].data() + task_seedcnt[tid], thr_per_task);
 
 
