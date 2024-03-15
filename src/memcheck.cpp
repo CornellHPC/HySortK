@@ -28,7 +28,7 @@ int get_memory_usage_kb(long* vmrss_kb, long* vmpeak_kb)
             found_vmrss = 1;
         }
 
-        search_result = strstr(line, "VmPeak:");
+        search_result = strstr(line, "VmHWM:");
         if (search_result != NULL)
         {
             sscanf(line, "%*s %ld", vmpeak_kb);
@@ -39,6 +39,38 @@ int get_memory_usage_kb(long* vmrss_kb, long* vmpeak_kb)
     }
 
     return (found_vmrss == 1 && found_vmpeak == 1) ? 0 : 1;
+}
+
+int get_free_memory_kb(size_t* memfree_kb)
+{
+    /* Get the the current process' status file from the proc filesystem */
+    FILE* procfile = fopen("/proc/meminfo", "r");
+
+    long to_read = 8192;
+    char buffer[to_read];
+    int read = fread(buffer, sizeof(char), to_read, procfile);
+    fclose(procfile);
+
+    short found_free = 0;
+    char* search_result;
+
+    /* Look through proc status contents line by line */
+    char delims[] = "\n";
+    char* line = strtok(buffer, delims);
+
+    while (line != NULL && (found_free==0) )
+    {
+        search_result = strstr(line, "MemFree:");
+        if (search_result != NULL)
+        {
+            sscanf(line, "%*s %zu", memfree_kb);
+            found_free = 1;
+        }
+
+        line = strtok(NULL, delims);
+    }
+
+    return (found_free) ? 0 : 1;
 }
 
 int get_cluster_memory_usage_kb(long* vmrss_per_process, long* vmpeak_per_process, int root, int np)
@@ -84,7 +116,7 @@ void print_mem_log(int nprocs, int myrank, std::string msg){
         vmrss /= (1024 * 1024);
         vmpeak /= (1024 * 1024);
 
-        printf("Total VmRSS = %6ld GB, VmPeak = %6ld GB\n", vmrss, vmpeak);
+        printf("Total VmRSS = %6ld GB, VmHWM = %6ld GB\n", vmrss, vmpeak);
     }
 }
 

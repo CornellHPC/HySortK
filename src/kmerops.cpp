@@ -6,6 +6,7 @@
 #include "memcheck.hpp"
 #include "supermer.hpp"
 #include "compiletime.h"
+#include "raduls.h"
 #include <cstring>
 #include <numeric>
 #include <algorithm>
@@ -157,6 +158,19 @@ supermer_exchanger.print_stats();
     return std::unique_ptr<KmerSeedBuckets>(bucket);
 }
 
+int get_ppn() {
+    char* ppnc = std::getenv("SLURM_TASKS_PER_NODE");
+    if (ppnc == NULL) {
+        return -1;
+    }
+    // read until meet the first non-digit character
+    int ppn = 0;
+    while (*ppnc != '\0' && *ppnc >= '0' && *ppnc <= '9') {
+        ppn = ppn * 10 + *ppnc - '0';
+        ppnc++;
+    }
+    return ppn;
+}
 
 
 std::unique_ptr<KmerList>
@@ -183,13 +197,16 @@ filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, int thr_per_task)
     omp_set_num_threads(ntasks);
 
     uint64_t task_seedcnt[ntasks];
+    uint64_t task_seedtot = 0;
     uint64_t valid_kmer[ntasks];
     KmerList kmerlists[ntasks];
 
 
     for (int i = 0; i < ntasks; i++) {
         task_seedcnt[i] = (*recv_kmerseeds)[i].size();
+        task_seedtot += task_seedcnt[i];
     }
+
     
 #if LOG_LEVEL >= 3
     logger() <<"task num: "<< ntasks << " \tthread per task: " << thr_per_task <<" \ttask size: ";
@@ -224,20 +241,67 @@ filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, int thr_per_task)
     timer.start();
 #endif
 
-    // distribute available threads to each task in according to number of tasks
- //   int nthreads = omp_get_max_threads();
-  //  int total_seeds = std::accumulate(task_seedcnt, task_seedcnt + ntasks, (uint64_t)0);
 
+    /* choose the sort algorithm */ 
+
+    int sort = 0;
+
+    if( SORT == 1 ) {
+        sort = 1;
+        logger() << "Using PARADIS for sorting.";
+    } else if( SORT == 2 ) {
+        sort = 2;
+        logger() << "Using RADULS for sorting.";
+    } else {
+        /* SORT == 0, decide upon available memory */
+        int ppn = get_ppn(); 
+        size_t memfree_kb; 
+        if (get_free_memory_kb(&memfree_kb) == 1 || ppn == -1) {
+            logger() << "Warning: Could not get free memory or Process per node. Default to PARADIS.";
+            sort = 1;
+        } else {
+            size_t memfree = memfree_kb * 921 / ppn ;   // 1024 * 0.9 = 921
+            if (memfree >= task_seedtot * TKmer::NBYTES) {
+                sort = 2;
+                logger() << "Enough memory available. Using RADULS for sorting. Average available mem (Bytes): "<<memfree<<"  Kmer Seeds:"<<task_seedtot<<"  Processes Per Node:"<<ppn<< " Bytes per Kmer:" << TKmer::NBYTES;
+            } else {
+                logger() << "Not enough memory available. Using PARADIS for sorting.";
+                sort = 1;
+            }
+        }
+    }
+    logger.flush("Sort algorithm decision:");
+    print_mem_log(nprocs, myrank, "Before Sorting");
+
+    size_t start_pos[ntasks];
 
     /* sort the receiving vectors */
     #pragma omp parallel 
     {
 
         int tid = omp_get_thread_num();
-//        int tasknum = std::max(1, (int)std::round((double)task_seedcnt[tid] * nthreads / total_seeds));
-        paradis::sort<KmerSeedStruct, TKmer::NBYTES>((*recv_kmerseeds)[tid].data(), (*recv_kmerseeds)[tid].data() + task_seedcnt[tid], thr_per_task);
 
+        if (sort == 1){
+            start_pos[tid] = 0;
+            paradis::sort<KmerSeedStruct, TKmer::NBYTES>((*recv_kmerseeds)[tid].data(), (*recv_kmerseeds)[tid].data() + task_seedcnt[tid], thr_per_task);
+        } else {
+            //uint8_t* tmp = (uint8_t*)malloc(task_seedcnt[tid] * TKmer::NBYTES + 256);
+            uint8_t* tmp_arr = new uint8_t[task_seedcnt[tid] * TKmer::NBYTES + 256];
+            uint8_t* tmp = tmp_arr + 256 - (size_t)tmp_arr % 256;
+            raduls::CleanTmpArray(tmp, task_seedcnt[tid], TKmer::NBYTES, thr_per_task);
 
+            // RADULS needs padding. reserved in bucket assistant
+            uint8_t* start = (uint8_t*)(*recv_kmerseeds)[tid].data();
+            int cnt = 0;
+            while( (size_t)start % 256 != 0) {
+                start += TKmer::NBYTES;
+                (*recv_kmerseeds)[tid].push_back((*recv_kmerseeds)[tid][cnt]);
+                cnt++;
+            }
+            start_pos[tid] = cnt;
+            raduls::RadixSortMSD(start, tmp, task_seedcnt[tid], TKmer::NBYTES, TKmer::NBYTES, thr_per_task);
+            delete[] (tmp_arr);
+        }
 #if LOG_LEVEL >= 3
     }
     timer.stop_and_log("(Inc) Shared memory parallel K-mer sorting");
@@ -253,11 +317,11 @@ filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, int thr_per_task)
         /* do a linear scan and filter out the kmers we want */
         
         kmerlists[tid].reserve(uint64_t(task_seedcnt[tid] / LOWER_KMER_FREQ));
-        TKmer last_mer = (*recv_kmerseeds)[tid][0].kmer;
+        TKmer last_mer = (*recv_kmerseeds)[tid][start_pos[tid]].kmer;
         uint64_t cur_kmer_cnt = 1;
         valid_kmer[tid] = 0;
 
-        for(size_t idx = 1; idx < task_seedcnt[tid]; idx++) {
+        for(size_t idx = start_pos[tid] + 1; idx < task_seedcnt[tid] + start_pos[tid]; idx++) {
             TKmer cur_mer = (*recv_kmerseeds)[tid][idx].kmer;
             if (cur_mer == last_mer) {
                 cur_kmer_cnt++;

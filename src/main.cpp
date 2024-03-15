@@ -41,6 +41,7 @@ int main(int argc, char **argv){
         log() << "      UPPER_KMER_FREQ: " << UPPER_KMER_FREQ << std::endl;
         log() << "      LOGGING_LEVEL: " << LOG_LEVEL << std::endl;
         log() << "      DEBUG: " << DEBUG << std::endl<< std::endl;
+        log() << "      SORT (0: runtime decision, 1: PARADIS, 2: RADULS): " << SORT << std::endl;
 
         log() << "Runtime Parameters:" << std::endl;
         log() << "      Fasta File: " << std::quoted(fasta_fname)<< std::endl;

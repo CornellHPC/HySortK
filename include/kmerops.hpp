@@ -481,7 +481,10 @@ struct BucketAssistant{
         }
 
         for(int i = 0; i < ntasks; i++) {
+            bucket[i].reserve(recv_base[nprocs-1][i] + recv_cnt[nprocs-1][i] + 256 / TKmer::NBYTES);
             bucket[i].resize(recv_base[nprocs-1][i] + recv_cnt[nprocs-1][i]);
+
+            // The 256 / TKmer::NBYTES is padded for RADULS
         }
     }    
     
