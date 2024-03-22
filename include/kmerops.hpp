@@ -12,8 +12,8 @@
 #include "logger.hpp"
 #include "compiletime.h"
 
-#define DISPATCH_UPPER_COE 3.0
-#define DISPATCH_STEP 0.1
+#define DISPATCH_UPPER_COE 2.0
+#define DISPATCH_STEP 0.05
 
 typedef uint32_t PosInRead;
 typedef  int64_t ReadId;
@@ -183,7 +183,6 @@ public:
 
 
     void handle_dispatch(std::vector<size_t>& task_dest) {
-        // gather the statistics
 
         // create the tasks
         std::vector<tasks> tasklist;
@@ -200,16 +199,18 @@ public:
         }
         avg_sz /= nprocs;
 
-        std::cout<<"Average size: "<<avg_sz<<std::endl;
-        for (int i = 0; i < global_tasks; i++) {
-            std::cout<<tasklist[i].sz<<" ";
-        }
-        std::cout<<std::endl;
+#if LOG_LEVEL >= 2
+        std::cout<<"Task Average Size: "<<avg_sz<<std::endl;
+#endif
 
-        double coe = 1.1;
+        double coe = 1.02;
         while (coe < DISPATCH_UPPER_COE) {
             size_t upper_bound = coe * avg_sz;
-            std::cout<<"Upper bound: "<<upper_bound<<std::endl;
+
+#if LOG_LEVEL >= 2
+            std::cout<<"Trying Upper bound: "<<upper_bound<<std::endl;
+#endif
+
             if (upper_bound < tasklist[global_tasks-1].sz) {
                 coe += DISPATCH_STEP;
                 continue;
@@ -228,22 +229,29 @@ public:
             }
 
             // assign the rest of the tasks
-            for (int i = 0; i < nprocs; i++) {
-                if (sizes[i] >= upper_bound) {
-                    continue;
-                }
-                for (int j = global_tasks-1; j >=0 ; j--) {
-                    if (assigned[j]) {
+            bool modified = true;
+            while (modified) {
+                modified = false;
+                for (int i = 0; i < nprocs; i++) {
+                    if (sizes[i] >= upper_bound) {
                         continue;
                     }
-                    if (sizes[i] + tasklist[j].sz <= upper_bound) {
-                        sizes[i] += tasklist[j].sz;
-                        dispatch[i].push_back(tasklist[j].id);
-                        assigned[j] = true;
+                    for (int j = global_tasks-1; j >=0 ; j--) {
+                        if (assigned[j]) {
+                            continue;
+                        }
+                        if (sizes[i] + tasklist[j].sz <= upper_bound) {
+                            sizes[i] += tasklist[j].sz;
+                            dispatch[i].push_back(tasklist[j].id);
+                            assigned[j] = true;
+                            modified = true;
+                            break;
+                        }
                     }
                 }
             }
 
+#if LOG_LEVEL >= 3
             for (int i = 0; i < nprocs; i++) {
                 std::cout<<"Process "<<i<<" size: "<<sizes[i]<<"   taskid: ";
                 for (int j = 0; j < dispatch[i].size(); j++) {
@@ -251,6 +259,7 @@ public:
                 }
                 std::cout<<std::endl;
             }
+#endif
 
             // check if all tasks are assigned
             bool all_assigned = true;
@@ -268,14 +277,17 @@ public:
                         task_dest[dispatch[i][j]] = i;
                     }
                 }
+#if LOG_LEVEL >= 2
                 std::cout<<"Dispatch succeed!"<<std::endl;
+#endif
+
                 return;
             }
 
             coe += DISPATCH_STEP;
         }
 
-        std::cout<<"Error: cannot dispatch the tasks. Consider changing the upper limit."<<std::endl;
+        std::cerr<<"Error: cannot dispatch the tasks. Consider changing the upper limit."<<std::endl;
         exit(0);
     }
 
@@ -452,7 +464,18 @@ public:
         recvbuf_y = new uint8_t[batch_size * nprocs];
 
         status = BATCH_SENDING;
+
+#if LOG_LEVEL >= 3
+Timer timer(comm);
+timer.start();
+#endif
+
         write_sendbufs(sendbuf_y);
+
+#if LOG_LEVEL >= 3
+timer.stop_and_log("write_first_sendbuf");
+#endif
+
         MPI_Ialltoall(sendbuf_y, batch_size, MPI_BYTE, recvbuf_y, batch_size, MPI_BYTE, comm, &req);
     }
 

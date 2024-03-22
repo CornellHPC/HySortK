@@ -108,10 +108,22 @@ std::unique_ptr<KmerSeedBuckets> exchange_supermer(ParallelData& data, MPI_Comm 
     MPI_Comm_size(comm, &nprocs);
     Logger logger(comm);
 
+#if LOG_LEVEL >= 3
+Timer timer(comm);
+timer.start();
+#endif
+
 
     auto local_tasksz = data.get_local_tasksz();
     dispatcher.balanced_dispatch(comm, local_tasksz);
+    // dispatcher.plain_dispatch();
     int mytasks = dispatcher.get_taskid(myrank).size();
+
+#if LOG_LEVEL >= 3
+timer.stop_and_log("(Inc) Task dispatch");
+timer.start();
+#endif
+
     std::vector<size_t> send_counts(nprocs * data.ntasks, 0);
     std::vector<size_t> recv_counts(nprocs * mytasks, 0);
 
@@ -133,7 +145,6 @@ std::unique_ptr<KmerSeedBuckets> exchange_supermer(ParallelData& data, MPI_Comm 
     }
 
 
-
     for (int i = 0; i < nprocs; i++) {
         rdispls[i] = i * mytasks;
         rcounts[i] = mytasks;
@@ -143,12 +154,10 @@ std::unique_ptr<KmerSeedBuckets> exchange_supermer(ParallelData& data, MPI_Comm 
     MPI_Alltoallv(send_counts.data(), scounts.data(), sdispls.data(), MPI_UNSIGNED_LONG_LONG, 
             recv_counts.data(), rcounts.data(), rdispls.data(), MPI_UNSIGNED_LONG_LONG, comm);
 
-    // MPI_Alltoall(send_counts.data(), ntasks, MPI_UNSIGNED_LONG_LONG, recv_counts.data(), ntasks, MPI_UNSIGNED_LONG_LONG, comm);
-
     std::vector<std::vector<uint32_t>> length;
 
 #if LOG_LEVEL >= 3
-Timer timer(comm);
+timer.stop_and_log("(Inc) Task Size information exchange");
 timer.start();
 #endif
 
@@ -410,7 +419,7 @@ filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, TaskDispatcher& di
     }
 
 #if LOG_LEVEL >= 3
-    timer.stop_and_log("K-mer counting");
+    timer.stop_and_log("(Inc) K-mer counting");
     timer.start();
 #endif
 
