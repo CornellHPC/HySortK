@@ -35,13 +35,14 @@ int main(int argc, char **argv){
         log() << "Compiling Parameters:" << std::endl;
         log() << "      KMER_SIZE: " << KMER_SIZE << std::endl;
         log() << "      MINIMIZER_SIZE: " << MINIMIZER_SIZE << std::endl;
-        log() << "      THREAD_PER_TASK: " << THREAD_PER_TASK << std::endl;
+        log() << "      THREAD_PER_WORKER: " << THREAD_PER_WORKER << std::endl;
         log() << "      MAX_THREAD_MEMORY_BOUNDED: " << MAX_THREAD_MEMORY_BOUNDED << std::endl;
         log() << "      LOWER_KMER_FREQ: " << LOWER_KMER_FREQ << std::endl;
         log() << "      UPPER_KMER_FREQ: " << UPPER_KMER_FREQ << std::endl;
         log() << "      LOGGING_LEVEL: " << LOG_LEVEL << std::endl;
         log() << "      DEBUG: " << DEBUG << std::endl;
         log() << "      MAX_SEND_BATCH: " << MAX_SEND_BATCH << std::endl;
+        log() << "      AVG_TASK_PER_WORKER: " << AVG_TASK_PER_WORKER << std::endl;
         log() << "      SORT (0: runtime decision, 1: PARADIS, 2: RADULS): " << SORT << std::endl << std::endl;
 
         log() << "Runtime Parameters:" << std::endl;
@@ -72,11 +73,12 @@ int main(int argc, char **argv){
     timer.stop_and_log("prepare_supermer");
 
     timer.start();
-    auto bucket = exchange_supermer(data, MPI_COMM_WORLD);
+    auto dispatcher = TaskDispatcher(nprocs, data.ntasks);
+    auto bucket = exchange_supermer(data, MPI_COMM_WORLD, dispatcher);
     timer.stop_and_log("exchange_supermer");
 
     timer.start();
-    auto kmerlist = filter_kmer(bucket);
+    auto kmerlist = filter_kmer(bucket, dispatcher);
     timer.stop_and_log("filter_kmer");
 
     print_kmer_histogram(*kmerlist, MPI_COMM_WORLD);

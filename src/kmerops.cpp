@@ -21,7 +21,7 @@
 ParallelData
 prepare_supermer(const DnaBuffer& myreads,
      MPI_Comm comm,
-     int thr_per_task,
+     int thr_per_worker,
      int max_thr_membounded)
 {
 
@@ -34,10 +34,10 @@ prepare_supermer(const DnaBuffer& myreads,
 
     /* parallel settings */
     omp_set_nested(1);
-    int ntasks = omp_get_max_threads() / thr_per_task;
+    int ntasks = omp_get_max_threads() / thr_per_worker * AVG_TASK_PER_WORKER;
     if (ntasks < 1) {
-        ntasks = 1;
-        thr_per_task = omp_get_max_threads();
+        ntasks = AVG_TASK_PER_WORKER;
+        thr_per_worker = omp_get_max_threads();
     }
     /* for memory bounded operations in this stage, we use another number of threads */
     int nthr_membounded = std::min(omp_get_max_threads() , max_thr_membounded);
@@ -48,7 +48,7 @@ prepare_supermer(const DnaBuffer& myreads,
 
 
 #if LOG_LEVEL >= 2
-    logger() << ntasks << " \t (thread per task: " << thr_per_task << ")";
+    logger() << ntasks << " \t (thread per worker: " << thr_per_worker << ")";
     logger.flush("Task num:", 0);
     logger() << nthr_membounded ;
     logger.flush("Thread count used for memory bounded operations:", 0);
@@ -100,7 +100,7 @@ prepare_supermer(const DnaBuffer& myreads,
 
 
 
-std::unique_ptr<KmerSeedBuckets> exchange_supermer(ParallelData& data, MPI_Comm comm)
+std::unique_ptr<KmerSeedBuckets> exchange_supermer(ParallelData& data, MPI_Comm comm, TaskDispatcher& dispatcher)
 {
     int myrank;
     int nprocs;
@@ -108,17 +108,42 @@ std::unique_ptr<KmerSeedBuckets> exchange_supermer(ParallelData& data, MPI_Comm 
     MPI_Comm_size(comm, &nprocs);
     Logger logger(comm);
 
-    int ntasks = data.ntasks;
 
-    std::vector<size_t> send_counts(nprocs * ntasks, 0);
-    std::vector<size_t> recv_counts(nprocs * ntasks, 0);
+    auto local_tasksz = data.get_local_tasksz();
+    dispatcher.balanced_dispatch(comm, local_tasksz);
+    int mytasks = dispatcher.get_taskid(myrank).size();
+    std::vector<size_t> send_counts(nprocs * data.ntasks, 0);
+    std::vector<size_t> recv_counts(nprocs * mytasks, 0);
 
+    std::vector<int32_t> scounts(nprocs, 0);
+    std::vector<int32_t> sdispls(nprocs, 0);
+    std::vector<int32_t> rcounts(nprocs, 0);
+    std::vector<int32_t> rdispls(nprocs, 0);
+
+
+    uint32_t offset = 0;
     for (int i = 0; i < nprocs; i++) {
-        for (int j = 0; j < ntasks; j++) 
-            send_counts[i * ntasks + j] = data.get_supermer_cnt(i, j);
+        auto taskids = dispatcher.get_taskid(i);
+        scounts[i] = taskids.size();
+        sdispls[i] = offset;
+        for (int j = 0; j < taskids.size(); j++) {
+            send_counts[offset + j] = data.get_supermer_cnt(taskids[j]);
+        }
+        offset += taskids.size();
     }
 
-    MPI_Alltoall(send_counts.data(), ntasks, MPI_UNSIGNED_LONG_LONG, recv_counts.data(), ntasks, MPI_UNSIGNED_LONG_LONG, comm);
+
+
+    for (int i = 0; i < nprocs; i++) {
+        rdispls[i] = i * mytasks;
+        rcounts[i] = mytasks;
+    }
+
+
+    MPI_Alltoallv(send_counts.data(), scounts.data(), sdispls.data(), MPI_UNSIGNED_LONG_LONG, 
+            recv_counts.data(), rcounts.data(), rdispls.data(), MPI_UNSIGNED_LONG_LONG, comm);
+
+    // MPI_Alltoall(send_counts.data(), ntasks, MPI_UNSIGNED_LONG_LONG, recv_counts.data(), ntasks, MPI_UNSIGNED_LONG_LONG, comm);
 
     std::vector<std::vector<uint32_t>> length;
 
@@ -127,7 +152,7 @@ Timer timer(comm);
 timer.start();
 #endif
 
-    LengthExchanger length_exchanger(comm, ntasks, MAX_SEND_BATCH, sizeof(uint32_t), data.nthr_membounded, data.lengths, recv_counts, length);
+    LengthExchanger length_exchanger(comm, MAX_SEND_BATCH, sizeof(uint32_t), data.nthr_membounded, data.lengths, recv_counts, length, dispatcher);
     length_exchanger.initialize();
 
     while(length_exchanger.status != LengthExchanger::Status::BATCH_DONE) {
@@ -140,8 +165,8 @@ length_exchanger.print_stats();
 timer.start();
 #endif
 
-    KmerSeedBuckets* bucket = new KmerSeedBuckets(ntasks);
-    SupermerExchanger supermer_exchanger(comm, ntasks, MAX_SEND_BATCH, MAX_SUPERMER_LEN, data.nthr_membounded, data.lengths, data.supermers, recv_counts, length, *bucket); 
+    KmerSeedBuckets* bucket = new KmerSeedBuckets(mytasks);
+    SupermerExchanger supermer_exchanger(comm, MAX_SEND_BATCH, MAX_SUPERMER_LEN, data.nthr_membounded, data.lengths, data.supermers, recv_counts, length, *bucket, dispatcher); 
     
     supermer_exchanger.initialize();
     while (supermer_exchanger.status != SupermerExchanger::Status::BATCH_DONE)
@@ -174,7 +199,7 @@ int get_ppn() {
 
 
 std::unique_ptr<KmerList>
-filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, int thr_per_task)
+filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, TaskDispatcher& dispatcher, int thr_per_worker)
 {
 
     Logger logger(MPI_COMM_WORLD);
@@ -185,54 +210,55 @@ filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, int thr_per_task)
     std::ostringstream rootlog;
 
     /* determine how many threads to use for each task */
-    int ntasks = omp_get_max_threads() / thr_per_task;
-    if (ntasks < 1){
-        ntasks = 1;
-        thr_per_task = omp_get_max_threads();
+    int nworkers = omp_get_max_threads() / thr_per_worker;
+    if (nworkers < 1){
+        nworkers = 1;
+        thr_per_worker = omp_get_max_threads();
     }
 
-    assert(ntasks == recv_kmerseeds->size());
+    auto tasks = dispatcher.get_taskid(myrank);
+    int mytasks = tasks.size();
+
+    assert(mytasks == recv_kmerseeds->size());
 
     omp_set_nested(1);
-    omp_set_num_threads(ntasks);
+    omp_set_num_threads(nworkers);
 
-    uint64_t task_seedcnt[ntasks];
+    uint64_t task_seedcnt[mytasks];
     uint64_t task_seedtot = 0;
-    uint64_t valid_kmer[ntasks];
-    KmerList kmerlists[ntasks];
+    uint64_t valid_kmer[mytasks];
+    KmerList kmerlists[mytasks];
 
 
-    for (int i = 0; i < ntasks; i++) {
+    for (int i = 0; i < mytasks; i++) {
         task_seedcnt[i] = (*recv_kmerseeds)[i].size();
         task_seedtot += task_seedcnt[i];
     }
 
     
 #if LOG_LEVEL >= 3
-    logger() <<"task num: "<< ntasks << " \tthread per task: " << thr_per_task <<" \ttask size: ";
-    for (int i = 0; i < ntasks; i++) {
+    logger() <<"worker num: "<< nworkers << " \tthread per worker: " << thr_per_worker << std::endl;
+    logger() <<"task num: "<<mytasks<<" \ttask size: ";
+    for (int i = 0; i < mytasks; i++) {
         logger() << task_seedcnt[i] << " ";
     }
     logger.flush("Parallel tasks for kmer sorting and counting:");
 
-    uint64_t all_seedcnt[ntasks * nprocs];
-    MPI_Gather(task_seedcnt, ntasks, MPI_UNSIGNED_LONG_LONG, all_seedcnt, ntasks, MPI_UNSIGNED_LONG_LONG, 0, MPI_COMM_WORLD);
+    size_t mytotseed = std::accumulate(task_seedcnt, task_seedcnt + mytasks, (uint64_t)0);
+    uint64_t all_seedcnt[nprocs];
+    MPI_Gather(&mytotseed, 1, MPI_UNSIGNED_LONG_LONG, all_seedcnt, 1, MPI_UNSIGNED_LONG_LONG, 0, MPI_COMM_WORLD);
     // rank 0 calculate the standard deviation
     if (myrank==0) {
         uint64_t sum = 0;
         for (int i = 0; i < nprocs; i++) {
-            for (int j = 0; j < ntasks; j++) {
-                sum += all_seedcnt[i * ntasks + j];
-            }
+                sum += all_seedcnt[i];
         }
-        uint64_t mean = (sum) / (ntasks * nprocs);
+        uint64_t mean = (sum) / (nprocs);
         uint64_t stddev = 0;
         for (int i = 0; i < nprocs; i++) {
-            for (int j = 0; j < ntasks; j++) {
-                stddev += (all_seedcnt[i * ntasks + j] - mean) * (all_seedcnt[i * ntasks + j] - mean);
-            }
+            stddev += (all_seedcnt[i] - mean) * (all_seedcnt[i] - mean);
         }
-        stddev = sqrt(stddev / (ntasks * nprocs));
+        stddev = sqrt(stddev / (nprocs));
         logger() << "mean: " << mean << " \t\t std_dev: " << stddev << " \t\t ratio: " << (double)stddev / mean;
     }
     logger.flush("Task size count distribution statistics:", 0);
@@ -273,91 +299,113 @@ filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, int thr_per_task)
     logger.flush("Sort algorithm decision:");
     print_mem_log(nprocs, myrank, "Before Sorting");
 
-    size_t start_pos[ntasks];
+    size_t start_pos[mytasks];
+
+    double times[nworkers];
 
     /* sort the receiving vectors */
-    #pragma omp parallel 
-    {
-
-        int tid = omp_get_thread_num();
-
-        if (sort == 1){
-            start_pos[tid] = 0;
-            paradis::sort<KmerSeedStruct, TKmer::NBYTES>((*recv_kmerseeds)[tid].data(), (*recv_kmerseeds)[tid].data() + task_seedcnt[tid], thr_per_task);
-        } else {
-            //uint8_t* tmp = (uint8_t*)malloc(task_seedcnt[tid] * TKmer::NBYTES + 256);
-            uint8_t* tmp_arr = new uint8_t[task_seedcnt[tid] * TKmer::NBYTES + 256];
-            uint8_t* tmp = tmp_arr + 256 - (size_t)tmp_arr % 256;
-            raduls::CleanTmpArray(tmp, task_seedcnt[tid], TKmer::NBYTES, thr_per_task);
-
-            // RADULS needs padding. reserved in bucket assistant
-            uint8_t* start = (uint8_t*)(*recv_kmerseeds)[tid].data();
-            int cnt = 0;
-            while( (size_t)start % 256 != 0) {
-                start += TKmer::NBYTES;
-                (*recv_kmerseeds)[tid].push_back((*recv_kmerseeds)[tid][cnt]);
-                cnt++;
-            }
-            start_pos[tid] = cnt;
-            raduls::RadixSortMSD(start, tmp, task_seedcnt[tid], TKmer::NBYTES, TKmer::NBYTES, thr_per_task);
-            delete[] (tmp_arr);
-        }
-#if LOG_LEVEL >= 3
-    }
-    timer.stop_and_log("(Inc) Shared memory parallel K-mer sorting");
-    print_mem_log(nprocs, myrank, "After Sorting");
-
-    timer.start();
     #pragma omp parallel
     {
         int tid = omp_get_thread_num();
+        int current_task_idx = tid;
+        TimerLocal tm;
+        tm.start();
+
+        while(current_task_idx < mytasks) {
+            int current_task = current_task_idx;
+
+            if (sort == 1){
+                start_pos[current_task] = 0;
+                paradis::sort<KmerSeedStruct, TKmer::NBYTES>((*recv_kmerseeds)[current_task].data(), (*recv_kmerseeds)[current_task].data() + task_seedcnt[current_task], thr_per_worker);
+            } else {
+                uint8_t* tmp_arr = new uint8_t[task_seedcnt[current_task] * TKmer::NBYTES + 256];
+                uint8_t* tmp = tmp_arr + 256 - (size_t)tmp_arr % 256;
+                raduls::CleanTmpArray(tmp, task_seedcnt[current_task], TKmer::NBYTES, thr_per_worker);
+
+                // RADULS needs padding. reserved in bucket assistant
+                uint8_t* start = (uint8_t*)(*recv_kmerseeds)[current_task].data();
+                int cnt = 0;
+                while( (size_t)start % 256 != 0) {
+                    start += TKmer::NBYTES;
+                    (*recv_kmerseeds)[current_task].push_back((*recv_kmerseeds)[current_task][cnt]);
+                    cnt++;
+                }
+                start_pos[current_task] = cnt;
+                raduls::RadixSortMSD(start, tmp, task_seedcnt[current_task], TKmer::NBYTES, TKmer::NBYTES, thr_per_worker);
+                delete[] (tmp_arr);
+            }
+
+            current_task_idx += nworkers;
+        }
+        times[tid] = tm.stop();
+    }
+    
+#if LOG_LEVEL >= 3
+    timer.stop_and_log("(Inc) Shared memory parallel K-mer sorting");
+    print_mem_log(nprocs, myrank, "After Sorting");
+    logger() << "Sorting time: ";
+    for (int i = 0; i < nworkers; i++) {
+        logger() << times[i] << " ";
+    }
+    logger.flush("Sorting time for tasks:");
+
+    timer.start();
 #endif
 
+    #pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        int current_task_idx = tid;
 
-        /* do a linear scan and filter out the kmers we want */
-        
-        kmerlists[tid].reserve(uint64_t(task_seedcnt[tid] / LOWER_KMER_FREQ));
-        TKmer last_mer = (*recv_kmerseeds)[tid][start_pos[tid]].kmer;
-        uint64_t cur_kmer_cnt = 1;
-        valid_kmer[tid] = 0;
+        while(current_task_idx < mytasks) {
+            int current_task = current_task_idx;
 
-        for(size_t idx = start_pos[tid] + 1; idx < task_seedcnt[tid] + start_pos[tid]; idx++) {
-            TKmer cur_mer = (*recv_kmerseeds)[tid][idx].kmer;
-            if (cur_mer == last_mer) {
-                cur_kmer_cnt++;
-            } else {
-                if (cur_kmer_cnt >= LOWER_KMER_FREQ && cur_kmer_cnt <= UPPER_KMER_FREQ) {
+            /* do a linear scan and filter out the kmers we want */
+            
+            kmerlists[current_task].reserve(uint64_t(task_seedcnt[current_task] / LOWER_KMER_FREQ));
+            TKmer last_mer = (*recv_kmerseeds)[current_task][start_pos[current_task]].kmer;
+            uint64_t cur_kmer_cnt = 1;
+            valid_kmer[current_task] = 0;
 
-                    kmerlists[tid].push_back(KmerListEntry());
-                    KmerListEntry& entry    = kmerlists[tid].back();
+            for(size_t idx = start_pos[current_task] + 1; idx < task_seedcnt[current_task] + start_pos[current_task]; idx++) {
+                TKmer cur_mer = (*recv_kmerseeds)[current_task][idx].kmer;
+                if (cur_mer == last_mer) {
+                    cur_kmer_cnt++;
+                } else {
+                    if (cur_kmer_cnt >= LOWER_KMER_FREQ && cur_kmer_cnt <= UPPER_KMER_FREQ) {
 
-                    TKmer& kmer             = std::get<0>(entry);
-                    int& count              = std::get<1>(entry);
+                        kmerlists[current_task].push_back(KmerListEntry());
+                        KmerListEntry& entry    = kmerlists[current_task].back();
 
-                    count = cur_kmer_cnt;
-                    kmer = last_mer;
+                        TKmer& kmer             = std::get<0>(entry);
+                        int& count              = std::get<1>(entry);
 
-                    valid_kmer[tid]++;
+                        count = cur_kmer_cnt;
+                        kmer = last_mer;
+
+                        valid_kmer[current_task]++;
+                    }
+
+                    cur_kmer_cnt = 1;
+                    last_mer = cur_mer;
                 }
-
-                cur_kmer_cnt = 1;
-                last_mer = cur_mer;
             }
-        }
 
-        /* deal with the last kmer of a task */
-        if (cur_kmer_cnt >= LOWER_KMER_FREQ && cur_kmer_cnt <= UPPER_KMER_FREQ) {
-            kmerlists[tid].push_back(KmerListEntry());
-            KmerListEntry& entry         = kmerlists[tid].back();
+            /* deal with the last kmer of a task */
+            if (cur_kmer_cnt >= LOWER_KMER_FREQ && cur_kmer_cnt <= UPPER_KMER_FREQ) {
+                kmerlists[current_task].push_back(KmerListEntry());
+                KmerListEntry& entry         = kmerlists[current_task].back();
 
-            TKmer& kmer             = std::get<0>(entry);
-            int& count              = std::get<1>(entry);
+                TKmer& kmer             = std::get<0>(entry);
+                int& count              = std::get<1>(entry);
 
-            count = cur_kmer_cnt;
-            kmer = last_mer;
+                count = cur_kmer_cnt;
+                kmer = last_mer;
 
 
-            valid_kmer[tid]++;
+                valid_kmer[current_task]++;
+            }
+            current_task_idx += nworkers;
         }
     }
 
@@ -367,7 +415,7 @@ filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, int thr_per_task)
 #endif
 
 #if LOG_LEVEL >= 2
-    for (int i = 0; i < ntasks; i++) {
+    for (int i = 0; i < mytasks; i++) {
         logger() << valid_kmer[i] << " ";
     }
     logger.flush("Valid kmer from tasks:");
@@ -375,12 +423,12 @@ filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, int thr_per_task)
 #endif
 
 
-    uint64_t valid_kmer_total = std::accumulate(valid_kmer, valid_kmer + ntasks, (uint64_t)0);
+    uint64_t valid_kmer_total = std::accumulate(valid_kmer, valid_kmer + mytasks, (uint64_t)0);
     KmerList* kmerlist = new KmerList();
     kmerlist->reserve(valid_kmer_total);
 
     // yfli: actually we don't need to copy it into one single kmerlist
-    for (int i = 0; i < ntasks; i++) {
+    for (int i = 0; i < mytasks; i++) {
         kmerlist->insert(kmerlist->end(), kmerlists[i].begin(), kmerlists[i].end());
     }
 
@@ -393,6 +441,7 @@ filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, int thr_per_task)
 
     return std::unique_ptr<KmerList>(kmerlist);
 }
+
 
 void FindKmerDestinationsParallel(const DnaBuffer& myreads, int nthreads, int tot_tasks, ParallelData& data) {
     

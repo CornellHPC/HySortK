@@ -30,6 +30,17 @@ struct Timer
         elapsed += MPI_Wtime();
     }
 
+    void local_start()
+    {
+        elapsed = -MPI_Wtime();
+    }
+
+    double local_stop()
+    {
+        elapsed += MPI_Wtime();
+        return elapsed;
+    }
+
     void log(char const *label)
     {
         double maxtime, proctime;
@@ -57,6 +68,27 @@ struct Timer
     double get_elapsed() const
     {
         return elapsed + MPI_Wtime();
+    }
+};
+
+
+struct TimerLocal
+{
+    double elapsed;
+
+    TimerLocal() : elapsed(0)
+    {
+    }
+
+    void start()
+    {
+        elapsed = -MPI_Wtime();
+    }
+
+    double stop()
+    {
+        elapsed += MPI_Wtime();
+        return elapsed;
     }
 };
 
