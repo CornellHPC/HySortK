@@ -311,18 +311,47 @@ filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, TaskDispatcher& di
     size_t start_pos[mytasks];
 
     double times[nworkers];
+    int unfinished_workers = std::min(nworkers, mytasks);
+    int total_threadnum = thr_per_worker * nworkers;
+    bool tasks_processed[mytasks];
+    for (int i = 0; i < mytasks; i++) {
+        tasks_processed[i] = false;
+    }
 
     /* sort the receiving vectors */
     #pragma omp parallel
     {
         int tid = omp_get_thread_num();
-        int current_task_idx = tid;
+        // int current_task_idx = tid;
         TimerLocal tm;
         tm.start();
 
-        while(current_task_idx < mytasks) {
-            int current_task = current_task_idx;
+        while(true) {
+            int current_task = -1;
+            bool finished = false;
+            #pragma omp critical
+            {
+                for (int i = 0; i < mytasks; i++) {
+                    if (!tasks_processed[i]) {
+                        current_task = i;
+                        tasks_processed[i] = true;
+                        break;
+                    }
+                }
+                if (current_task == -1) {
+                    finished = true;
+                }
+            }
+            if (finished) {
+                break;
+            }
 
+            int thr_per_worker = total_threadnum / unfinished_workers;
+
+            #pragma omp critical
+            {
+                logger()<< "Task "<<current_task<<" Sorting with "<<thr_per_worker<<" threads on worker "<<tid<<std::endl;
+            }
             if (sort == 1){
                 start_pos[current_task] = 0;
                 paradis::sort<KmerSeedStruct, TKmer::NBYTES>((*recv_kmerseeds)[current_task].data(), (*recv_kmerseeds)[current_task].data() + task_seedcnt[current_task], thr_per_worker);
@@ -340,14 +369,22 @@ filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, TaskDispatcher& di
                     cnt++;
                 }
                 start_pos[current_task] = cnt;
+
                 raduls::RadixSortMSD(start, tmp, task_seedcnt[current_task], TKmer::NBYTES, TKmer::NBYTES, thr_per_worker);
                 delete[] (tmp_arr);
             }
 
-            current_task_idx += nworkers;
         }
         times[tid] = tm.stop();
+        #pragma omp critical
+        {
+            unfinished_workers--;
+        }
     }
+
+    logger.flush("Sorting time for tasks:");
+
+
     
 #if LOG_LEVEL >= 3
     timer.stop_and_log("(Inc) Shared memory parallel K-mer sorting");
@@ -381,7 +418,8 @@ filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, TaskDispatcher& di
                 if (cur_mer == last_mer) {
                     cur_kmer_cnt++;
                 } else {
-                    if (cur_kmer_cnt >= LOWER_KMER_FREQ && cur_kmer_cnt <= UPPER_KMER_FREQ) {
+                    // if (cur_kmer_cnt >= LOWER_KMER_FREQ && cur_kmer_cnt <= UPPER_KMER_FREQ)
+                    if (cur_kmer_cnt >= LOWER_KMER_FREQ ) {
 
                         kmerlists[current_task].push_back(KmerListEntry());
                         KmerListEntry& entry    = kmerlists[current_task].back();
@@ -401,7 +439,8 @@ filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, TaskDispatcher& di
             }
 
             /* deal with the last kmer of a task */
-            if (cur_kmer_cnt >= LOWER_KMER_FREQ && cur_kmer_cnt <= UPPER_KMER_FREQ) {
+            // if (cur_kmer_cnt >= LOWER_KMER_FREQ && cur_kmer_cnt <= UPPER_KMER_FREQ) 
+            if (cur_kmer_cnt >= LOWER_KMER_FREQ ) {
                 kmerlists[current_task].push_back(KmerListEntry());
                 KmerListEntry& entry         = kmerlists[current_task].back();
 
@@ -446,6 +485,20 @@ filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, TaskDispatcher& di
 
 #if LOG_LEVEL >= 3
     timer.stop_and_log("(Inc) K-mer copying");
+#endif
+
+#if LOG_LEVEL >= 4
+    // write kmer list to a file
+    std::ostringstream kmerfilename;
+    kmerfilename << "/pscratch/sd/y/yfli03/log/kmerlist_" << myrank << ".txt";
+    
+    std::ofstream kmerfile;
+    kmerfile.open(kmerfilename.str());
+    for (size_t i = 0; i < kmerlist->size(); i++) {
+        kmerfile << std::get<0>((*kmerlist)[i]) << " " << std::get<1>((*kmerlist)[i]) << std::endl;
+    }
+
+    kmerfile.close();
 #endif
 
     return std::unique_ptr<KmerList>(kmerlist);

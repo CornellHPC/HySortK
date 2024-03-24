@@ -498,11 +498,16 @@ timer.stop_and_log("write_first_sendbuf");
 #if LOG_LEVEL >= 3
         timer.stop_and_log("write_sendbufs");
         timer.start();
+        TimerLocal t2;
+        t2.start();
 #endif
 
         MPI_Wait(&req, MPI_STATUS_IGNORE);
 
 #if LOG_LEVEL >= 3
+        Logger logger(comm);
+        logger() << t2.stop();
+        logger.flush("MPI_Wait");
         timer.stop_and_log("MPI_Wait");
         timer.start();
 #endif
