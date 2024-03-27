@@ -12,8 +12,11 @@
 #include "logger.hpp"
 #include "compiletime.h"
 
+#include "supermer.hpp"
+
 #define DISPATCH_UPPER_COE 2.0
 #define DISPATCH_STEP 0.05
+#define UNBALANCED_RATIO 3.0
 
 typedef uint32_t PosInRead;
 typedef  int64_t ReadId;
@@ -23,6 +26,30 @@ typedef std::array<ReadId,    UPPER_KMER_FREQ> READIDS;
 
 typedef std::tuple<TKmer, int> KmerListEntry;
 typedef std::vector<KmerListEntry> KmerList;
+
+struct KmerListEntryS {
+    TKmer kmer;
+    uint64_t cnt;   // for padding considerations we use uint64_t
+    KmerListEntryS(TKmer kmer, int cnt) : kmer(kmer), cnt(cnt) {};
+    KmerListEntryS(const KmerListEntryS& o) : kmer(o.kmer), cnt(o.cnt) {};
+    KmerListEntryS(KmerListEntryS&& o) : kmer(std::move(o.kmer)), cnt(o.cnt) {};
+    KmerListEntryS() {};
+
+    KmerListEntryS& operator=(const KmerListEntryS& o)
+    {
+        kmer = o.kmer;
+        cnt = o.cnt;
+        return *this;
+    }
+
+    bool operator < (const KmerListEntryS& o) const { return kmer < o.kmer; }
+    bool operator == (const KmerListEntryS& o) const { return kmer == o.kmer; }
+    bool operator != (const KmerListEntryS& o) const { return kmer != o.kmer; }
+    int GetByte(int &i) const { return kmer.getByte(i); }
+};
+
+typedef std::vector<KmerListEntryS> KmerListS;
+typedef std::vector<KmerListS> KmerListSVec;
 
 class TaskDispatcher;
 
@@ -50,90 +77,183 @@ struct KmerSeedStruct{
 typedef std::vector<std::vector<KmerSeedStruct>> KmerSeedBuckets;
 typedef std::vector<std::vector<std::vector<KmerSeedStruct>>> KmerSeedVecs;
 
-std::unique_ptr<KmerList>
+std::unique_ptr<KmerListS>
 filter_kmer(std::unique_ptr<KmerSeedBuckets>& recv_kmerseeds, 
+     std::unique_ptr<KmerListSVec>& recv_kmerlists,
      TaskDispatcher& dispatcher,
      int thr_per_worker = THREAD_PER_WORKER);
 
 int GetKmerOwner(const TKmer& kmer, int nprocs);
 
-void print_kmer_histogram(const KmerList& kmerlist, MPI_Comm comm);
+
+int get_ppn();
+
+
+inline int pad_bytes(const int& len);
+
+inline int cnt_bytes(const int& len);
+
+
+int sort_decision(size_t total_bytes, Logger& logger);
+
+template<typename T>
+void sort_task(std::vector<T>& kmerseeds, int sort, int thr_per_worker, size_t& start_pos, size_t seedcnt);
+
+void count_sorted_task(std::vector<KmerSeedStruct>& kmerseeds, KmerListS& kmerlist, size_t start_pos, size_t seedcnt, size_t& valid_kmer, bool filter=true);
+
+void count_sorted_kmerlist(KmerListS& kmers, KmerListS& kmerlist, size_t start_pos, size_t seedcnt, size_t& valid_kmer, bool filter=true);
+
+void print_kmer_histogram(const KmerListS& kmerlist, MPI_Comm comm);
 
 class ParallelData{
-    private:
+private:
 
-        std::vector<std::vector<std::vector<int>>> destinations;
-        std::vector<std::vector<uint64_t>> readids;
+    std::vector<std::vector<std::vector<int>>> destinations;
+    std::vector<std::vector<uint64_t>> readids;
 
-    public:
-        int nprocs;
-        int ntasks;
-        int nthr_membounded;
-        std::vector<std::vector<std::vector<uint32_t>>> lengths;
-        std::vector<std::vector<std::vector<uint8_t>>> supermers;
+public:
+    int nprocs;
+    int ntasks;
+    int nthr_membounded;
+    std::vector<int> task_type;
+    std::vector<std::vector<std::vector<uint32_t>>> lengths;
+    std::vector<std::vector<std::vector<uint8_t>>> supermers;
+    std::vector<KmerListS> kmerlists;
+    
 
-        ParallelData(int nprocs, int ntasks, int nthr_membounded) {
-            this->nprocs = nprocs;
-            this->ntasks = ntasks;
-            this->nthr_membounded = nthr_membounded;
-            destinations.resize(nthr_membounded);
-            lengths.resize(nthr_membounded);
-            supermers.resize(nthr_membounded);
-            readids.resize(nthr_membounded);
+    ParallelData(int nprocs, int ntasks, int nthr_membounded) {
+        this->nprocs = nprocs;
+        this->ntasks = ntasks;
+        this->nthr_membounded = nthr_membounded;
+        destinations.resize(nthr_membounded);
+        lengths.resize(nthr_membounded);
+        supermers.resize(nthr_membounded);
+        readids.resize(nthr_membounded);
+        kmerlists.resize(nprocs * ntasks);
 
-            for (int i = 0; i < nthr_membounded; i++) {
-                lengths[i].resize(nprocs * ntasks);
-                supermers[i].resize(nprocs * ntasks);
-            }
+        for (int i = 0; i < nthr_membounded; i++) {
+            lengths[i].resize(nprocs * ntasks);
+            supermers[i].resize(nprocs * ntasks);
         }
+    }
 
-        std::vector<std::vector<int>>& get_my_destinations(int tid) {
-            return destinations[tid];
-        }
+    void set_task_type(std::vector<int>& task_types) {
+        task_type = std::vector<int>(task_types.begin(), task_types.end());
+    }
 
-        std::vector<int>& register_new_destination (int tid, uint64_t readid) {
-            destinations[tid].push_back(std::vector<int>());
-            readids[tid].push_back(readid);
-            return destinations[tid].back();
-        }
+    int get_preprocessed_length(int taskid) {
+        return kmerlists[taskid].size();
+    }
 
-        std::vector<std::vector<uint32_t>>& get_my_lengths(int tid) {
-            return lengths[tid];
-        }
+    void preprocess_tasks(int thr_per_worker) {
+        std::vector<bool> processed(nprocs * ntasks, false);
+        #pragma omp parallel num_threads(ntasks)
+        {
+            int tid = omp_get_thread_num();
+            int task = tid;
+            processed[task] = true;
+            #pragma omp barrier
 
-        std::vector<std::vector<uint8_t>>& get_my_supermers(int tid) {
-            return supermers[tid];
-        }
+            while(task < nprocs * ntasks) {
 
-        std::vector<uint64_t>& get_my_readids(int tid) {
-            return readids[tid];
-        }
+                if (task_type[task] == 1) {
+                    std::vector<KmerSeedStruct> kmerseeds;
 
-        size_t get_supermer_cnt(int global_taskid) {
-            size_t cnt = 0;
-            for (int i = 0; i < nthr_membounded; i++) {
-                cnt += lengths[i][global_taskid].size();
-            }
-            return cnt;
-        }
+                    size_t total_len = 0;
+                    for (int i = 0; i < nthr_membounded; i++) {
+                        total_len += std::accumulate(lengths[i][task].begin(), lengths[i][task].end(), 0) - ( KMER_SIZE - 1 ) * lengths[i][task].size();
+                    }
+                    kmerseeds.reserve(total_len + 256 / TKmer::NBYTES);
 
-        std::vector<size_t> get_local_tasksz() {
-            std::vector<size_t> tasksz(ntasks * nprocs, 0);
-            for (int i = 0; i < nthr_membounded; i++) {
-                for (int j = 0; j < nprocs * ntasks; j++) {
-                    tasksz[j] += ( std::accumulate(lengths[i][j].begin(), 
-                                   lengths[i][j].end(), 
-                                   0) - ( KMER_SIZE - 1 ) * lengths[i][j].size() );
+                    // extract all the kmers from supermers
+                    for (int i = 0; i < nthr_membounded; i++) {
+                        size_t idx = 0;
+                        for(size_t j = 0; j < lengths[i][task].size(); j++) {
+                            size_t len = lengths[i][task][j];
+                            size_t len_bytes = cnt_bytes(len);
+                            auto seq = DnaSeq(len, supermers[i][task].data() + idx);
+
+                            auto repmers = TKmer::GetRepKmers(seq);
+
+                            for (int k = 0; k < len - KMER_SIZE + 1; k++) {
+                                kmerseeds.emplace_back(repmers[k]);
+                            }
+                            idx += len_bytes;
+                        }
+                        lengths[i][task].clear();
+                        supermers[i][task].clear();
+                    }
+
+                    //std::cout<<"Task "<<task<<" has "<<kmerseeds.size()<<" kmers with total_len"<<total_len<<std::endl;
+                    assert(kmerseeds.size() == total_len);
+                    size_t start_pos;
+                    sort_task(kmerseeds, 1, thr_per_worker, start_pos, total_len);
+                    size_t valid_kmer;
+                    count_sorted_task(kmerseeds, kmerlists[task], start_pos, total_len, valid_kmer, false);
+                }
+
+
+                #pragma omp critical
+                {
+                    while(task < nprocs * ntasks && processed[task]) {
+                        task++;
+                    }
+                    if (task < nprocs * ntasks) {
+                        processed[task] = true;
+                    }
                 }
             }
-            return tasksz;
-        
         }
+    }
+
+    std::vector<std::vector<int>>& get_my_destinations(int tid) {
+        return destinations[tid];
+    }
+
+    std::vector<int>& register_new_destination (int tid, uint64_t readid) {
+        destinations[tid].push_back(std::vector<int>());
+        readids[tid].push_back(readid);
+        return destinations[tid].back();
+    }
+
+    std::vector<std::vector<uint32_t>>& get_my_lengths(int tid) {
+        return lengths[tid];
+    }
+
+    std::vector<std::vector<uint8_t>>& get_my_supermers(int tid) {
+        return supermers[tid];
+    }
+
+    std::vector<uint64_t>& get_my_readids(int tid) {
+        return readids[tid];
+    }
+
+    size_t get_supermer_cnt(int global_taskid) {
+        size_t cnt = 0;
+        for (int i = 0; i < nthr_membounded; i++) {
+            cnt += lengths[i][global_taskid].size();
+        }
+        return cnt;
+    }
+
+    std::vector<size_t> get_local_tasksz() {
+        std::vector<size_t> tasksz(ntasks * nprocs, 0);
+        for (int i = 0; i < nthr_membounded; i++) {
+            for (int j = 0; j < nprocs * ntasks; j++) {
+                tasksz[j] += ( std::accumulate(lengths[i][j].begin(), 
+                                lengths[i][j].end(), 
+                                0) - ( KMER_SIZE - 1 ) * lengths[i][j].size() );
+            }
+        }
+        return tasksz;
+    
+    }
 };
 
 class TaskDispatcher {
 private:
     std::vector<std::vector<size_t>> taskid;
+    std::vector<int> task_type;
     std::vector<size_t> tasksz;
     size_t nprocs;
     size_t ntasks;
@@ -145,6 +265,7 @@ public:
         global_tasks = nprocs * ntasks;
         taskid.resize(nprocs);
         tasksz.resize(ntasks * nprocs, 0);
+        task_type.resize(ntasks * nprocs, 0);
     }
 
     std::vector<size_t>& get_taskid(int procid) {
@@ -153,6 +274,22 @@ public:
 
     std::vector<std::vector<size_t>>& get_all_taskid() {
         return taskid;
+    }
+
+    std::vector<int>& get_task_type() {
+        return task_type;
+    }
+
+    std::vector<int> get_unbalanced_taskidx(int procid){
+        auto taskid = get_taskid(procid);
+        std::vector<int> unbalanced_taskidx;
+        for (int i = 0; i < taskid.size(); i++) {
+            if (task_type[taskid[i]]==1) {
+                //std::cout<<"Unbalanced task: "<<taskid[i]<<"  its i:"<<i<<std::endl;
+                unbalanced_taskidx.push_back(i);
+            }
+        }
+        return unbalanced_taskidx;
     }
 
     struct tasks{
@@ -202,6 +339,16 @@ public:
 #if LOG_LEVEL >= 2
         std::cout<<"Task Average Size: "<<avg_sz<<std::endl;
 #endif
+
+        // determine if unbalanced
+        for (int i = 0; i < global_tasks; i++) {
+            if (tasksz[i] * ntasks > UNBALANCED_RATIO * avg_sz) {
+                task_type[i] = 1;
+            }
+            if(i==1) {
+                task_type[i] = 1;
+            }
+        }
 
         double coe = 1.02;
         while (coe < DISPATCH_UPPER_COE) {
@@ -303,6 +450,7 @@ public:
         }
         MPI_Barrier(comm);
         MPI_Bcast(task_dest.data(), global_tasks, MPI_UNSIGNED_LONG, 0, comm);
+        MPI_Bcast(task_type.data(), global_tasks, MPI_INT, 0, comm);
         
         for (int i = 0; i < global_tasks; i++){
             taskid[task_dest[i]].push_back(i);
@@ -317,14 +465,6 @@ prepare_supermer(const DnaBuffer& myreads,
      MPI_Comm comm,
      int thr_per_worker = THREAD_PER_WORKER,
      int max_thr_membounded = MAX_THREAD_MEMORY_BOUNDED);
-
-inline int pad_bytes(const int& len) {
-    return (4 - len % 4) * 2;
-}
-
-inline int cnt_bytes(const int& len) {
-    return (len + pad_bytes(len)) / 4;
-}
 
 struct SupermerEncoder{
     std::vector<std::vector<uint32_t>>& lengths;
@@ -684,11 +824,45 @@ public:
 struct BucketAssistant{
     int mytasks, nprocs;
     KmerSeedBuckets& bucket;
+    std::vector<KmerListS>& kmerlists;
     std::vector<std::vector<size_t>> recv_base;
     std::vector<std::vector<size_t>> current_recv;
+    std::vector<std::vector<size_t>> current_recv_list;
+    std::vector<std::vector<size_t>> max_recv_list;
 
-    BucketAssistant(int mytasks, int nprocs, KmerSeedBuckets& bucket, std::vector<std::vector<uint32_t>>& lengths) : 
-        mytasks(mytasks), nprocs(nprocs), bucket(bucket){
+    BucketAssistant(int mytasks, int nprocs, std::vector<int> unbalanced_taskidx, KmerSeedBuckets& bucket, 
+            std::vector<KmerListS>& kmerlists,
+            std::vector<std::vector<uint32_t>>& lengths,
+            std::vector<size_t>& kmerlist_lengths) : 
+        mytasks(mytasks), nprocs(nprocs), bucket(bucket), kmerlists(kmerlists){
+
+        current_recv_list.resize(mytasks);
+        kmerlists.resize(mytasks);
+        max_recv_list.resize(mytasks);
+
+        // resize kmerlists
+        //std::cout<<"Unbalanced taskidx size: "<<unbalanced_taskidx.size()<<std::endl;
+        auto unbalanced_task_cnt = unbalanced_taskidx.size();
+        for(int i = 0; i < unbalanced_taskidx.size(); i++) {
+            int idx = unbalanced_taskidx[i];
+            //std::cout<<"Task "<<idx<<std::endl;
+            current_recv_list[idx].resize(nprocs, 0);
+            max_recv_list[idx].resize(nprocs, 0);
+            for(int j = 1; j < nprocs; j++) {
+                current_recv_list[idx][j] = kmerlist_lengths[unbalanced_task_cnt * (j-1) + i] + current_recv_list[idx][j-1];
+            }
+            for(int j = 0; j < nprocs; j++) {
+                max_recv_list[idx][j] = current_recv_list[idx][j] + kmerlist_lengths[unbalanced_task_cnt * j + i];
+                //std::cout<<"Task "<<idx<<" max_recv_list["<<j<<"] = "<<max_recv_list[idx][j]<<std::endl;
+                //std::cout<<"kmerlist_lengths["<<unbalanced_task_cnt * j + i<<"] = "<<kmerlist_lengths[unbalanced_task_cnt * j + i]<<std::endl;
+            }
+            //std::cout<<"Resizing to"<<max_recv_list[idx][nprocs - 1]<<std::endl;
+            kmerlists[idx].reserve(max_recv_list[idx][nprocs - 1] + 256 / TKmer::NBYTES);
+            kmerlists[idx].resize(max_recv_list[idx][nprocs - 1]);
+            //std::cout<<"Task "<<idx<<" kmerlist size: "<<kmerlists[idx].size()<<std::endl;
+        }
+
+
         std::vector<std::vector<size_t>> recv_cnt;
 
         recv_cnt.resize(nprocs);
@@ -735,6 +909,24 @@ struct BucketAssistant{
 
         current_recv[procid][taskid] += len;
     }
+    
+    inline void insert_list(const int& procid, const int& taskidx, uint8_t* addr, size_t len) {
+        if (current_recv_list[taskidx][procid] + len > max_recv_list[taskidx][procid]) {
+            std::cerr<<"Error: Exceeding the maximum length of the kmerlist. May lead to incorrect results."<<std::endl;
+            return;
+        }
+        memcpy(kmerlists[taskidx].data() + current_recv_list[taskidx][procid], addr, len * sizeof(KmerListEntryS));
+        current_recv_list[taskidx][procid] += len;
+    }
+
+    bool insert_list_completed(const int& procid, const int& taskidx) {
+        //std::cout<<"Task "<<taskidx<<" procid "<<procid<<" current_recv_list "<<current_recv_list[taskidx][procid]<<" max_recv_list "<<max_recv_list[taskidx][procid]<<std::endl;
+        return current_recv_list[taskidx][procid] == max_recv_list[taskidx][procid];
+    }
+
+    size_t to_receive(const int& procid, const int& taskidx) {
+        return max_recv_list[taskidx][procid] - current_recv_list[taskidx][procid];
+    }
 };
 
 
@@ -744,6 +936,7 @@ private:
     int nthr_membounded;
     std::vector<std::vector<std::vector<uint32_t>>>& lengths;
     std::vector<std::vector<std::vector<uint8_t>>>& supermers;
+    std::vector<KmerListS>& kmerlists;
     std::vector<size_t> current_taskidx;
     std::vector<size_t> current_tid;
     std::vector<size_t> current_idx;
@@ -757,6 +950,7 @@ private:
             return true;
         }
         size_t taskid = (dispatcher.get_taskid(procid))[taskidx];
+        int task_type = dispatcher.get_task_type()[taskid];
 
         size_t tid = current_tid[procid];
         size_t idx = current_idx[procid];
@@ -765,20 +959,20 @@ private:
         size_t cnt = 0;
         while (cnt <= send_limit && taskidx != (size_t)(-1) ) {
 
+        if(task_type == 0) {
             if(idx >= lengths[tid][taskid].size()) {
                 tid++;
                 idx = 0;
                 supermer_idx = 0;
                 if(tid == nthr_membounded) {
                     taskidx++;
+                    tid = 0;
                     if (taskidx < dispatcher.get_taskid(procid).size()) {
                         taskid = (dispatcher.get_taskid(procid))[taskidx];
-                        tid = 0;
+                        task_type = dispatcher.get_task_type()[taskid];
                     } else {
                         taskidx = -1;
                     }
-
-                    tid = 0;
                 }
                 continue;
             }
@@ -788,8 +982,29 @@ private:
             cnt += len_bytes;
             supermer_idx += len_bytes;
             idx++;
+        }
+
+        if(task_type==1) {
+            if (idx >= kmerlists[taskid].size()) {
+                taskidx++;
+                idx = 0;
+                if (taskidx < dispatcher.get_taskid(procid).size()) {
+                    taskid = (dispatcher.get_taskid(procid))[taskidx];
+                    task_type = dispatcher.get_task_type()[taskid];
+                } else {
+                    taskidx = -1;
+                }
+            }
+
+            size_t n_to_send = std::min(kmerlists[taskid].size() - idx, (send_limit - cnt) / sizeof(KmerListEntryS) + 1);
+            memcpy(addr + cnt, kmerlists[taskid].data() + idx, n_to_send * sizeof(KmerListEntryS));
+            cnt += n_to_send * sizeof(KmerListEntryS);
+            idx += n_to_send;
+        }
+
 
         }
+
 
         current_taskidx[procid] = taskidx;
         current_tid[procid] = tid;
@@ -803,6 +1018,7 @@ private:
     std::vector<size_t> recv_idx;
     std::vector<size_t> recv_taskidx;
     std::vector<size_t> recv_cnt;
+    std::vector<size_t>& recv_list_cnt;
     BucketAssistant assistant;
 
     void parse_recvbufs(uint8_t* addr) {
@@ -814,20 +1030,27 @@ private:
 
 
     void parse_recvbuf(uint8_t* addr, int procid) override {
+        // std::cout<<"myrank "<<myrank<<" Parsing recvbuf for procid: "<<procid<<std::endl;
         size_t taskidx = recv_taskidx[procid];
         if (taskidx == (size_t)(-1)) {
             return;
         }
+        int task_type = dispatcher.get_task_type()[dispatcher.get_taskid(myrank)[taskidx]];
+        // std::cout<<"myrank "<<myrank<<" Task type: "<<task_type<<" task global id "<<dispatcher.get_taskid(myrank)[taskidx]<<std::endl;
+
         // size_t taskid = (dispatcher.get_taskid(myrank))[taskidx];
         size_t idx = recv_idx[procid];
-
         size_t cnt = 0;
         while (cnt <= send_limit && taskidx != (size_t)(-1)) {
+
+        if(task_type == 0) {
             if (idx >= recv_cnt[procid * mytasks + taskidx]) {
                 taskidx++;
+
                 if (taskidx < mytasks) {
                     // taskid = (dispatcher.get_taskid(myrank))[taskidx];
                     idx = 0;
+                    task_type = dispatcher.get_task_type()[dispatcher.get_taskid(myrank)[taskidx]];
                 } else {
                     taskidx = -1;
                 }
@@ -845,10 +1068,37 @@ private:
             idx++;
         }
 
+        if(task_type == 1) {
+
+            if (assistant.insert_list_completed(procid, taskidx)) {
+                //std::cout<<"Completed "<<procid<<" "<<taskidx<<std::endl;
+                taskidx++;
+                if (taskidx < mytasks) {
+                    idx = 0;
+                    task_type = dispatcher.get_task_type()[dispatcher.get_taskid(myrank)[taskidx]];
+                } else {
+                    taskidx = -1;
+                }
+                continue;
+            }
+
+
+
+            size_t n_to_recv = std::min(assistant.to_receive(procid, taskidx), (send_limit - cnt) / sizeof(KmerListEntryS) + 1);
+            //std::cout<<"in buffer count: "<<(send_limit - cnt) / sizeof(KmerListEntryS) + 1<<" to recv: "<<assistant.to_receive(procid, taskidx)<<std::endl;
+            assistant.insert_list(procid, taskidx, addr + cnt, n_to_recv);
+            idx += n_to_recv;
+            cnt += n_to_recv * sizeof(KmerListEntryS);
+        }
+
+        }
+
         recv_taskidx[procid] = taskidx;
         recv_idx[procid] = idx;
 
         _bytes_sent[procid] += cnt;
+        //std::cout<<"myrank "<<myrank<<" Parsed recvbuf for procid: "<<procid<<std::endl;
+
 
     }
 
@@ -863,10 +1113,15 @@ public:
                 std::vector<size_t>& recv_cnt,
                 std::vector<std::vector<uint32_t>>& recv_length,
                 KmerSeedBuckets& bucket,
-                TaskDispatcher& dispatcher) : 
+                TaskDispatcher& dispatcher,
+                KmerListSVec& kmerlists,
+                KmerListSVec& recv_kmerlists,
+                std::vector<size_t>& recv_kmerlist_lengths) : 
         BatchExchanger(comm, batch_size, max_element_size, dispatcher), 
         nthr_membounded(nthr_membounded), lengths(lengths), supermers(supermers), 
-        recv_cnt(recv_cnt), recv_length(recv_length), assistant(dispatcher.get_taskid(myrank).size(), nprocs, bucket, recv_length)
+        recv_cnt(recv_cnt), recv_length(recv_length), kmerlists(kmerlists), recv_list_cnt(recv_kmerlist_lengths),
+        assistant(dispatcher.get_taskid(myrank).size(), nprocs, dispatcher.get_unbalanced_taskidx(myrank),
+        bucket, recv_kmerlists, recv_length, recv_kmerlist_lengths)
         {
             // assistant = BucketAssistant(dispatcher.get_taskid(myrank), nprocs, bucket, recv_length);
             current_taskidx.resize(nprocs, 0);
@@ -945,7 +1200,7 @@ public:
 
 };
 
-std::unique_ptr<KmerSeedBuckets> exchange_supermer(ParallelData& data, MPI_Comm comm, TaskDispatcher& dispatch);
+std::pair<std::unique_ptr<KmerSeedBuckets>, std::unique_ptr<KmerListSVec>> exchange_supermer(ParallelData& data, MPI_Comm comm, TaskDispatcher& dispatch, int thr_per_worker = THREAD_PER_WORKER);
 
 
 struct KmerParserHandler

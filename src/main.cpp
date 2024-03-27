@@ -74,11 +74,11 @@ int main(int argc, char **argv){
 
     timer.start();
     auto dispatcher = TaskDispatcher(nprocs, data.ntasks);
-    auto bucket = exchange_supermer(data, MPI_COMM_WORLD, dispatcher);
+    auto [bucket, lists] = exchange_supermer(data, MPI_COMM_WORLD, dispatcher);
     timer.stop_and_log("exchange_supermer");
 
     timer.start();
-    auto kmerlist = filter_kmer(bucket, dispatcher);
+    auto kmerlist = filter_kmer(bucket, lists, dispatcher);
     timer.stop_and_log("filter_kmer");
 
     print_kmer_histogram(*kmerlist, MPI_COMM_WORLD);
