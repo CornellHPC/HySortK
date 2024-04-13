@@ -87,6 +87,23 @@ void Logger::flush(std::ostringstream& ss, int rank)
     MPI_Barrier(comm);
 }
 
+void Logger::flush_root(char const *label)
+{
+
+    std::string mylog = logstream->str();
+
+    if (myrank == 0)
+    {
+        std::string slabel(label);
+        std::cout<< slabel << std::endl;
+        std::cout << mylog << std::endl << std::endl;
+    }
+
+    logstream.reset(new std::ostringstream());
+
+    MPI_Barrier(comm);
+}
+
 void Logger::flush(char const *label, int prank)
 {
     int myrank;

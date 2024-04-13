@@ -69,16 +69,15 @@ int main(int argc, char **argv){
 
     /* start kmer counting */
     timer.start();
-    auto data = prepare_supermer(mydna, MPI_COMM_WORLD);
+    auto tm = prepare_supermer(mydna, MPI_COMM_WORLD);
     timer.stop_and_log("prepare_supermer");
 
     timer.start();
-    auto dispatcher = TaskDispatcher(nprocs, data.ntasks);
-    auto [bucket, lists] = exchange_supermer(data, MPI_COMM_WORLD, dispatcher);
+    exchange_supermer(tm, MPI_COMM_WORLD);
     timer.stop_and_log("exchange_supermer");
 
     timer.start();
-    auto kmerlist = filter_kmer(bucket, lists, dispatcher);
+    auto kmerlist = filter_kmer(tm, MPI_COMM_WORLD);
     timer.stop_and_log("filter_kmer");
 
     print_kmer_histogram(*kmerlist, MPI_COMM_WORLD);
