@@ -332,7 +332,9 @@ bool ScatteredSupermers::write_to_buffer(uint8_t* buffer, size_t& current_count,
 
 
 
-ScatteredKmerList::ScatteredKmerList(std::shared_ptr<ScatteredSupermers> supermer_task, int thr_per_worker) : working_idx_(0), ScatteredTask(supermer_task->get_taskid(), 2){
+ScatteredKmerList::ScatteredKmerList(std::shared_ptr<ScatteredSupermers> supermer_task, int thr_per_worker, size_t stage1_size) : 
+        working_idx_(0), stage1_size_(stage1_size),  ScatteredTask(supermer_task->get_taskid(), 2) {
+
     std::vector<KmerSeedStruct> kmerseeds;
 
     int nthr = supermer_task->get_nthr();
@@ -362,21 +364,23 @@ ScatteredKmerList::ScatteredKmerList(std::shared_ptr<ScatteredSupermers> superme
     sort_task(kmerseeds, 2, thr_per_worker, start_pos, total_len);
     size_t valid_kmer;
     count_sorted_kmers(kmerseeds, kmerlist_, start_pos, total_len, valid_kmer, false);
-    
+
+    stage1_size_ = std::min(stage1_size_, kmerlist_.size());
 }
 
 
 bool ScatteredKmerList::write_to_buffer(uint8_t* buffer, size_t& current_count, size_t max_count, int stage)  {
+    size_t end_idx = kmerlist_.size();
     if (stage == 1) {
-        return true;
+        end_idx = stage1_size_;
     }
 
-    size_t copy_num = std::min((max_count - current_count) / sizeof(KmerListEntryS) + 1, kmerlist_.size() - working_idx_);
+    size_t copy_num = std::min((max_count - current_count) / sizeof(KmerListEntryS) + 1, end_idx - working_idx_);
     memcpy(buffer + current_count, kmerlist_.data() + working_idx_, copy_num * sizeof(KmerListEntryS));
     current_count += copy_num * sizeof(KmerListEntryS);
     working_idx_ += copy_num;
 
-    return working_idx_ == kmerlist_.size();
+    return working_idx_ == end_idx;
     
 }
 
@@ -414,6 +418,11 @@ void GatheredSupermer::init_exchange(int stage)  {
         for (int i = 1; i < kmer_count_.size(); i++) {
             working_idx_[i] = start_idx_[i];
             working_kmer_idx_[i] = working_kmer_idx_[i-1] + kmer_count_[i-1];
+        }
+
+        size_t other_size = 0;
+        for(int i = 0; i < count_.size(); i++) {
+            other_size += kmer_count_[i];
         }
 
         kmer_.reserve(std::accumulate(kmer_count_.begin(), kmer_count_.end(), 0) + PAD_SIZE / sizeof(KmerSeedStruct) + 1);
@@ -483,20 +492,26 @@ void GatheredSupermer::process(int nthr, int sort)  {
 
 
 
-GatheredKmerList::GatheredKmerList(int taskid, int tasktype, std::vector<size_t> count) : 
+GatheredKmerList::GatheredKmerList(int taskid, int tasktype, std::vector<size_t> count, size_t stage1_size) : 
     GatheredTask(taskid, tasktype, count)
 {
+    stage1_size_.resize(count.size(), stage1_size);
+    for (int i = 0; i < count.size(); i++) {
+        stage1_size_[i] = std::min(stage1_size, count[i]);
+    }
+
     kmerlist_.reserve(std::accumulate(count.begin(), count.end(), 0) + PAD_SIZE / sizeof(KmerListEntryS) + 1);
     kmerlist_.resize(std::accumulate(count.begin(), count.end(), 0));
 }
 
 bool GatheredKmerList::receive_from_buffer(uint8_t* buffer, int src_process, size_t &current_count, size_t max_count, int stage)  {
-    if (stage == 1) {
-        return true;
-    }
     
     auto& working_idx = working_idx_[src_process];
     auto end_idx = start_idx_[src_process+1];
+
+    if (stage == 1) {
+        end_idx = stage1_size_[src_process] + start_idx_[src_process];
+    }
 
     size_t copy_num = std::min((max_count - current_count) / sizeof(KmerListEntryS) + 1, end_idx - working_idx);
     memcpy(kmerlist_.data() + working_idx, buffer + current_count, copy_num * sizeof(KmerListEntryS));
@@ -625,13 +640,35 @@ void TaskManager::classify_tasks() {
 }
 
 void TaskManager::preprocess_tasks(int thr_per_worker) {
+
+    size_t length_bytes = 0;
+    size_t nsmtasks = 0;
+    for (int i = 0; i < sca_tasks_.size(); i++) {
+        if (task_types_[i] == 0) {
+            nsmtasks++;
+            auto supermer_task = std::dynamic_pointer_cast<ScatteredSupermers>(sca_tasks_[i]);
+            length_bytes += supermer_task->get_size() * supermer_task->get_len_size();
+        }
+    }
+    length_bytes /= nsmtasks;
+
+    size_t stage1_round_est = length_bytes / max_send_size_;
+    if (stage1_round_est == 0) {
+        stage1_round_est = 1;
+    }
+    size_t stage1_kmerlist_cnt = stage1_round_est * max_send_size_ / sizeof(KmerListEntryS);
+    MPI_Bcast(&stage1_kmerlist_cnt, 1, MPI_UNSIGNED_LONG_LONG, 0, comm_);
+
+    stage1_kle_cnt_ = stage1_kmerlist_cnt;
+
+
     // TODO: parallelize this if there's performance issue
     for (int i = 0; i < sca_tasks_.size(); i++) {
         if (task_types_[i] == 0) {
             continue;
         } else if (task_types_[i] == 1) {
             auto supermer_task = std::dynamic_pointer_cast<ScatteredSupermers>(sca_tasks_[i]);
-            sca_tasks_[i] = std::make_shared<ScatteredKmerList>(supermer_task, thr_per_worker);
+            sca_tasks_[i] = std::make_shared<ScatteredKmerList>(supermer_task, thr_per_worker, stage1_kmerlist_cnt);
             continue;
         }
         throw std::runtime_error("Unknown task type.");
@@ -706,7 +743,7 @@ void TaskManager::init_exchange_groups() {
         if (task_types_[taskid] == 0) {
             gat_tasks.push_back(std::make_shared<GatheredSupermer>(taskid, 0, recv_counts));
         } else if (task_types_[taskid] == 1) {
-            gat_tasks.push_back(std::make_shared<GatheredKmerList>(taskid, 1, recv_counts));
+            gat_tasks.push_back(std::make_shared<GatheredKmerList>(taskid, 1, recv_counts, stage1_kle_cnt_));
         }
     }
 
@@ -725,6 +762,7 @@ void TaskManager::init_exchange_groups() {
 
 void TaskManager::exchange(int stage) {
     exchange_init(stage);
+    MPI_Barrier(comm_);
     int round = 0;
     while (true) {
         round++;
@@ -736,6 +774,27 @@ void TaskManager::exchange(int stage) {
     exchange_clearup(stage);
 
     return;
+}
+
+void TaskManager::exchange_stage_finish() {
+    delete[] classifier_;
+    delete[] dispatcher_;
+    delete[] send_buffer1_;
+    delete[] send_buffer2_;
+    delete[] recv_buffer1_;
+    delete[] recv_buffer2_;
+
+    classifier_ = nullptr;
+    dispatcher_ = nullptr;
+    send_buffer1_ = nullptr;
+    send_buffer2_ = nullptr;
+    recv_buffer1_ = nullptr;
+    recv_buffer2_ = nullptr;
+
+    sca_tasks_.clear();
+    
+    sending_groups_.clear();
+    receiving_groups_.clear();
 }
 
 void TaskManager::process_tasks(int nworker, int nthr_tot, int sort) {
@@ -782,6 +841,8 @@ void TaskManager::exchange_init(int stage) {
         sending_groups_[i]->init_exchange(stage);
         receiving_groups_[i]->init_exchange(stage);
     }
+
+    MPI_Barrier(comm_);
     
     write_sendbufs(stage);
 
@@ -804,12 +865,22 @@ bool TaskManager::exchange_progress(int stage) {
     timer.stop_and_log("Write sendbufs");
     timer.start();
 #endif
+#if LOG_LEVEL >= 4
+    TimerLocal tm2;
+    tm2.start();
+#endif
 
     MPI_Wait(&req_, MPI_STATUS_IGNORE); //recved to 1 
 
+#if LOG_LEVEL >= 4
+    logger_() << "Round time: " << tm2.stop() << std::endl;
+#endif
 #if LOG_LEVEL >= 3
     timer.stop_and_log("MPI_Wait");
     timer.start();
+#endif
+#if LOG_LEVEL >= 4
+    logger_.flush("Detailed time");
 #endif
 
     std::swap(send_buffer1_, send_buffer2_);

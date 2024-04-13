@@ -204,6 +204,7 @@ public:
     // This function is getting the number of supermers, not the number of kmers
     size_t get_size_bytes() override;
     size_t get_size() override;
+    size_t get_len_size() { return LEN_SIZE; }
     size_t get_size_kmer();
     int get_extra_coe() override { return extra_coe_; }
     void init_exchange(int stage);
@@ -217,8 +218,10 @@ private:
     KmerListS kmerlist_;
     size_t working_idx_;
 
+    size_t stage1_size_;
+
 public:
-    ScatteredKmerList(std::shared_ptr<ScatteredSupermers> supermer_task, int thr_per_worker=4);
+    ScatteredKmerList(std::shared_ptr<ScatteredSupermers> supermer_task, int thr_per_worker=4, size_t stage1_size=0);
     
     size_t get_size_bytes() override { return kmerlist_.size() * sizeof(KmerListEntryS); }
     size_t get_size() override { return kmerlist_.size(); }
@@ -278,9 +281,10 @@ public:
 class GatheredKmerList : public GatheredTask {
 private:
     KmerListS kmerlist_;
+    std::vector<size_t> stage1_size_;
 
 public:
-    GatheredKmerList(int taskid, int tasktype, std::vector<size_t> count);
+    GatheredKmerList(int taskid, int tasktype, std::vector<size_t> count, size_t stage1_size=0);
     void init_exchange(int stage) override { return; }
     bool receive_from_buffer(uint8_t* buffer, int src_process, size_t &current_count, size_t max_count, int stage) override;
     void process(int nthr, int sort) override;
@@ -397,6 +401,7 @@ private:
 
     size_t batch_size_;
     size_t max_send_size_;
+    size_t stage1_kle_cnt_;            // How many kmerlist entry is allowed to send in stage 1
     int nthr_;
     uint8_t* send_buffer1_ = nullptr;
     uint8_t* send_buffer2_ = nullptr;
@@ -433,6 +438,8 @@ public:
     // get the size of gathered tasks' data in bytes
     size_t get_gathered_task_bytes();
     void copy_results(KmerListS& kmerlist);
+
+    void exchange_stage_finish();
 
 private:
     // exchange related functions

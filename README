@@ -1,1 +1,15 @@
 Some of the code files are taken or adapted from ELBA. See https://github.com/PASSIONLab/ELBA
+
+You need to use `samtools` to index the dataset before running the kmer counter.
+
+To compile, load the MPI + OpenMP environment and use `make`. An example is
+
+```sh
+make K=31 M=17 L=2 U=50 LOG=2 -j8
+```
+
+To run the kmer counter, use your mpi runner with `./ukmerc $PATH_TO_DATASE`. For example, to run on perlmutter (in the interactive environment) with 4 nodes, use
+
+```sh
+srun -N 4 -n 32 -c 64 --cpu_bind=cores ./ukmerc ${PATH_TO_DATASET}
+```
