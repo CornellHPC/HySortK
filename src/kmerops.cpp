@@ -434,22 +434,28 @@ bool GatheredSupermer::receive_from_buffer_stage1(uint8_t* buffer, int src_proce
 }
 
 bool GatheredSupermer::receive_from_buffer_stage2(uint8_t* buffer, int src_process, size_t &current_count, size_t max_count) {
-    size_t& current_kmer_idx = working_kmer_idx_[src_process];
-    size_t& current_idx = working_idx_[src_process];
+    size_t current_kmer_idx = working_kmer_idx_[src_process];
+    size_t current_idx = working_idx_[src_process];
 
+    size_t ccnt = current_count;
 
-    while(current_count <= max_count && current_idx < start_idx_[src_process+1]) {
+    while(ccnt <= max_count && current_idx < start_idx_[src_process+1]) {
 
-        auto seq = DnaSeq(length_[current_idx], buffer + current_count);
+        auto seq = DnaSeq(length_[current_idx], buffer + ccnt);
         auto repmers = TKmer::GetRepKmers(seq);
 
         for (int i = 0; i < length_[current_idx] - KMER_SIZE + 1; i++) {
-            kmer_[current_kmer_idx++] = repmers[i];
+            kmer_[current_kmer_idx++] = KmerSeedStruct(repmers[i]);
         }
 
-        current_count += cnt_bytes(length_[current_idx]);
+        ccnt += cnt_bytes(length_[current_idx]);
         current_idx++;
     }
+
+    working_idx_[src_process] = current_idx;
+    working_kmer_idx_[src_process] = current_kmer_idx;
+    current_count = ccnt;
+
 
     return current_idx == start_idx_[src_process+1];
 }
