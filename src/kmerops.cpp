@@ -36,7 +36,8 @@ prepare_supermer(const DnaBuffer& myreads,
 
     /* parallel settings */
     omp_set_nested(1);
-    int avg_tasks = omp_get_max_threads() / avg_thr_per_worker * AVG_TASK_PER_WORKER;
+    // The '-1' is an optimization for heavy hitter strategy
+    int avg_tasks = omp_get_max_threads() / avg_thr_per_worker * AVG_TASK_PER_WORKER - 1;
     if (avg_tasks < 1) {
         avg_tasks = AVG_TASK_PER_WORKER;
     }
@@ -135,21 +136,21 @@ timer.start();
     tm.classify_tasks();
 
 #if LOG_LEVEL >= 3
-    timer.stop_and_log("Task classification");
+    timer.stop_and_log("(Inc) Task classification");
     timer.start();
 #endif
 
     tm.preprocess_tasks(avg_thr_per_worker);
 
 #if LOG_LEVEL >= 3
-    timer.stop_and_log("Task preprocessing");
+    timer.stop_and_log("(Inc) Task preprocessing");
     timer.start();
 #endif
 
     tm.dispatch();
 
 #if LOG_LEVEL >= 3
-    timer.stop_and_log("Task dispatch");
+    timer.stop_and_log("(Inc) Task dispatch");
     timer.start();
 #endif
 
@@ -157,7 +158,7 @@ timer.start();
     tm.init_exchange_groups();  
 
 #if LOG_LEVEL >= 3
-    timer.stop_and_log("Task exchange group initialization");   
+    timer.stop_and_log("(Inc) Task exchange group initialization");   
     timer.start();
 #endif  
 
@@ -165,7 +166,7 @@ timer.start();
     tm.exchange(1);
 
 #if LOG_LEVEL >= 3
-    timer.stop_and_log("Task exchange stage 1");
+    timer.stop_and_log("(Inc) Task exchange stage 1");
     timer.start();
 #endif
 
@@ -173,7 +174,7 @@ timer.start();
     tm.exchange(2);
 
 #if LOG_LEVEL >= 3
-    timer.stop_and_log("Task exchange stage 2");
+    timer.stop_and_log("(Inc) Task exchange stage 2");
 #endif
 
     return;
@@ -194,6 +195,8 @@ filter_kmer(std::shared_ptr<TaskManager> task_manager, MPI_Comm comm, int avg_th
 #if LOG_LEVEL >= 3
     Timer timer(comm);
     timer.start();
+    TimerLocal tl;
+    tl.start();
 #endif
 
 
@@ -217,7 +220,9 @@ filter_kmer(std::shared_ptr<TaskManager> task_manager, MPI_Comm comm, int avg_th
     tm.process_tasks(nworkers, avg_thr_per_worker, sort);
 
 #if LOG_LEVEL >= 3
+    logger() << tl.stop() << std::endl;
     timer.stop_and_log("(Inc) K-mer counting");
+    logger.flush("K-mer counting details:");
     timer.start();
 #endif
 
@@ -801,12 +806,18 @@ void TaskManager::process_tasks(int nworker, int nthr_tot, int sort) {
     int ntasks = gat_tasks_.size();
 
     int nworkers = std::min(nworker, ntasks);
+    // int nworkers = nworker;
     int nthr = nthr_tot / nworkers;
 
     #pragma omp parallel for schedule(dynamic) num_threads(nworkers)
     for(int i = 0; i < ntasks; i++) {
+        // TimerLocal timer;
+        // timer.start();
         gat_tasks_[i]->process(nthr, sort);
+        // logger_() << "Task " << i << " finished in time: " << timer.stop() << " on thread:" << omp_get_thread_num() <<std::endl;
     }
+
+    // logger_.flush("Task processing:");
 
 }
 
@@ -1114,6 +1125,7 @@ void HeavyHitterClassifier::classify(std::vector<std::shared_ptr<ScatteredTask>>
     MPI_Bcast(task_types.data(), ntask, MPI_INT, 0, comm);
 }
 
+
 bool BalancedDispatcher::try_dispatch(std::vector<TaskInfo>& task_info, std::vector<int>& destinations, int nprocs, size_t avg_size, double coe) {
     int ntasks = task_info.size();
     size_t upper_bound = avg_size * coe;
@@ -1123,12 +1135,17 @@ bool BalancedDispatcher::try_dispatch(std::vector<TaskInfo>& task_info, std::vec
     std::vector<std::vector<int>> assigned_task_id(nprocs);
     std::vector<size_t> assigned_size(nprocs, 0);
     std::vector<bool> assigned(ntasks, false);
+
+    auto ppn = get_ppn();
+    auto nodes = nprocs / ppn;
     /* stage1: each process get assigned a big task */
     for(int i = 0; i < nprocs; i++) {
+        //auto rank = (i % nodes) * ppn + (i / nodes + i) % ppn;
+        auto rank = i;
         int id = ntasks - 1 - i;
         assigned[id] = true;
-        assigned_task_id[i].push_back(id);
-        assigned_size[i] += task_info[id].sz * task_info[id].coe;
+        assigned_task_id[rank].push_back(task_info[id].id); // change here (ver a)
+        assigned_size[rank] += task_info[id].sz * task_info[id].coe;
     }
 
     /* stage2: assigned the result of the tasks */
@@ -1139,7 +1156,7 @@ bool BalancedDispatcher::try_dispatch(std::vector<TaskInfo>& task_info, std::vec
         int cnt = 0;
         while (cnt < nprocs) {
             if (assigned_size[cur_proc] + task_info[i].sz <= upper_bound) {
-                assigned_task_id[cur_proc].push_back(i);
+                assigned_task_id[cur_proc].push_back(task_info[i].id);
                 assigned_size[cur_proc] += task_info[i].sz * task_info[i].coe;
                 assigned[i] = true;
                 cur_proc--;

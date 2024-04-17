@@ -67,6 +67,9 @@ int main(int argc, char **argv){
     ss.clear(); ss.str("");
 
 
+    Timer timer_kcount(MPI_COMM_WORLD);
+    timer_kcount.start();
+
     /* start kmer counting */
     timer.start();
     auto tm = prepare_supermer(mydna, MPI_COMM_WORLD);
@@ -79,6 +82,8 @@ int main(int argc, char **argv){
     timer.start();
     auto kmerlist = filter_kmer(tm, MPI_COMM_WORLD);
     timer.stop_and_log("filter_kmer");
+
+    timer_kcount.stop_and_log("Overall kmer counting (Excluding I/O)");
 
     print_kmer_histogram(*kmerlist, MPI_COMM_WORLD);
 

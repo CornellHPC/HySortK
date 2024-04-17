@@ -343,9 +343,9 @@ public:
 class BalancedDispatcher : public TaskDispatcher {
 private:
     struct TaskInfo{
-        size_t id;
+        int64_t id;
         size_t sz;
-        size_t coe;
+        int64_t coe;
         bool operator < (const TaskInfo& o) const { return sz < o.sz; }
         bool operator > (const TaskInfo& o) const { return sz > o.sz; }
         bool operator == (const TaskInfo& o) const { return sz == o.sz; }
