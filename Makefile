@@ -1,22 +1,48 @@
+# Kmer Size
 K?=31
+# Minimizer Size
 M?=13
+# Lower Kmer Frequency
 L?=15
+# Upper Kmer Frequency
 U?=40
+
+# Log Level (1, 2, 3, 4)
 LOG?=2
+# Debugging
 D?=0
+
+# Thread per Worker
 T?=4
+# Max Thread Memory Bounded
 T2?=16
+# Average Task per Worker
 TPW?=2
+# SORTING OPTION (0: runtime decision, 1: paradis, 2: raduls)
 SORT?=0
-BATCH?=250000
-COMPILE_TIME_PARAMETERS=-DKMER_SIZE=$(K) -DMINIMIZER_SIZE=$(M) -DLOWER_KMER_FREQ=$(L) -DUPPER_KMER_FREQ=$(U) -DLOG_LEVEL=$(LOG) -DDEBUG=$(D) -DTHREAD_PER_WORKER=$(T) -DMAX_SEND_BATCH=$(BATCH) -DMAX_THREAD_MEMORY_BOUNDED=$(T2) -DSORT=$(SORT) -DAVG_TASK_PER_WORKER=$(TPW)
+# Max Send Batch
+BATCH?=100000
+
+# Dispatch Upper Coefficient
+DISPATCH_UPPER = 1.5
+# Dispatch Step
+DISPATCH_STEP = 0.05
+# Unbalanced Threshold
+UNBALANCED_THRESHOLD = 2.5
+
+COMPILE_TIME_PARAMETERS=-DKMER_SIZE=$(K) -DMINIMIZER_SIZE=$(M) \
+	-DLOWER_KMER_FREQ=$(L) -DUPPER_KMER_FREQ=$(U) -DLOG_LEVEL=$(LOG) -DDEBUG=$(D) \
+	-DTHREAD_PER_WORKER=$(T) -DMAX_SEND_BATCH=$(BATCH) -DMAX_THREAD_MEMORY_BOUNDED=$(T2) \
+	-DSORT=$(SORT) -DAVG_TASK_PER_WORKER=$(TPW) \
+	-DDISPATCH_UPPER_COE=$(DISPATCH_UPPER) -DDISPATCH_STEP=$(DISPATCH_STEP) \
+	-DUNBALANCED_RATIO=$(UNBALANCED_THRESHOLD)
 OPT=
 
 # TODO: check if M is less than K
 
 ifeq ($(D), 1)
 OPT+=-g -O2 -fsanitize=address -fno-omit-frame-pointer
-else ifeq ($(D), 2)		# Debugging with MAP
+else ifeq ($(D), 2)
 OPT+=-g1 -O3 -fno-inline -fno-optimize-sibling-calls
 else
 OPT+=-O3
@@ -55,7 +81,6 @@ obj/fastaindex.o: src/fastaindex.cpp include/fastaindex.hpp include/dnaseq.hpp i
 obj/hashfuncs.o: src/hashfuncs.cpp include/hashfuncs.hpp
 obj/kmerops.o: src/kmerops.cpp include/kmerops.hpp include/kmer.hpp include/dnaseq.hpp include/logger.hpp include/timer.hpp include/dnabuffer.hpp include/paradissort.hpp include/memcheck.hpp 
 obj/memcheck.o: src/memcheck.cpp include/memcheck.hpp
-# raduls/sorting_network.o: src/sorting_network.cpp include/raduls.h include/record.h include/small_sort.h include/sorting_network.h include/exceptions.h include/defs.h include/comp_and_swap.h
 
 clean:
 	rm -rf *.o obj/* ukmerc $(HOME)/bin/ukmerc

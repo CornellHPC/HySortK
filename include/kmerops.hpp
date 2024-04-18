@@ -18,13 +18,11 @@
 /*
  * Constants
  */
-#define PAD_SIZE 256
-#define DISPATCH_UPPER_COE 1.5
-#define DISPATCH_STEP 0.05
-#define UNBALANCED_RATIO 2.5
+#define PAD_SIZE 256        // For raduls
 
 typedef uint32_t PosInRead;
 typedef  int64_t ReadId;
+typedef uint32_t length_t;  // This can be changed to uint8_t, but no siginificant improvement is found
 
 
 /*
@@ -184,8 +182,8 @@ private:
     int extra_coe_ = 1;
 
     std::vector<std::vector<uint8_t>> supermers_;
-    std::vector<std::vector<uint32_t>> lengths_;
-    constexpr static int LEN_SIZE = sizeof(uint32_t);
+    std::vector<std::vector<length_t>> lengths_;
+    constexpr static int LEN_SIZE = sizeof(length_t);
 
     int working_thr_;
     int working_idx_;
@@ -199,7 +197,7 @@ public:
 
     int get_nthr() { return nthr_; }
     std::vector<uint8_t>& get_supermer_buffer (int tid) { return supermers_[tid]; }
-    std::vector<uint32_t>& get_length_buffer (int tid) { return lengths_[tid]; }   
+    std::vector<length_t>& get_length_buffer (int tid) { return lengths_[tid]; }   
 
     // This function is getting the number of supermers, not the number of kmers
     size_t get_size_bytes() override;
@@ -258,11 +256,11 @@ public:
 class GatheredSupermer : public GatheredTask {
 private:
     std::vector<KmerSeedStruct> kmer_;
-    std::vector<uint32_t> length_;
+    std::vector<length_t> length_;
     std::vector<size_t> kmer_count_;
     std::vector<size_t> working_kmer_idx_;
 
-    constexpr static int LEN_SIZE = sizeof(uint32_t);
+    constexpr static int LEN_SIZE = sizeof(length_t);
 
     bool receive_from_buffer_stage1(uint8_t* buffer, int src_process, size_t &current_count, size_t max_count);
     bool receive_from_buffer_stage2(uint8_t* buffer, int src_process, size_t &current_count, size_t max_count);

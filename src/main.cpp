@@ -43,7 +43,10 @@ int main(int argc, char **argv){
         log() << "      DEBUG: " << DEBUG << std::endl;
         log() << "      MAX_SEND_BATCH: " << MAX_SEND_BATCH << std::endl;
         log() << "      AVG_TASK_PER_WORKER: " << AVG_TASK_PER_WORKER << std::endl;
-        log() << "      SORT (0: runtime decision, 1: PARADIS, 2: RADULS): " << SORT << std::endl << std::endl;
+        log() << "      SORT (0: runtime decision, 1: PARADIS, 2: RADULS): " << SORT << std::endl;
+        log() << "      DISPATCH_UPPER_COE: " << DISPATCH_UPPER_COE << std::endl;
+        log() << "      DISPATCH_STEP: " << DISPATCH_STEP << std::endl;
+        log() << "      UNBALANCED_RATIO: " << UNBALANCED_RATIO << std::endl << std::endl;
 
         log() << "Runtime Parameters:" << std::endl;
         log() << "      Fasta File: " << std::quoted(fasta_fname)<< std::endl;

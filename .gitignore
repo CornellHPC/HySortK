@@ -6,5 +6,6 @@ ukmerc
 *.out
 *.map
 bin/ .
+*.sh
 
 testdata/

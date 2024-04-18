@@ -217,7 +217,7 @@ filter_kmer(std::shared_ptr<TaskManager> task_manager, MPI_Comm comm, int avg_th
     int sort = sort_decision(gathered_task_bytes, logger);
     logger.flush("Sort algorithm decision:");
 
-    tm.process_tasks(nworkers, avg_thr_per_worker, sort);
+    tm.process_tasks(nworkers, omp_get_max_threads(), sort);
 
 #if LOG_LEVEL >= 3
     logger() << tl.stop() << std::endl;
@@ -264,7 +264,7 @@ size_t ScatteredSupermers::get_size()  {
 size_t ScatteredSupermers::get_size_bytes()  {
     size_t size = 0;
     for (int i = 0; i < nthr_; i++) {
-        size += lengths_[i].size() * sizeof(uint32_t);
+        size += lengths_[i].size() * sizeof(length_t);
     }
     for (int i = 0; i < nthr_; i++) {
         size += supermers_[i].size();
@@ -811,13 +811,17 @@ void TaskManager::process_tasks(int nworker, int nthr_tot, int sort) {
 
     #pragma omp parallel for schedule(dynamic) num_threads(nworkers)
     for(int i = 0; i < ntasks; i++) {
-        // TimerLocal timer;
-        // timer.start();
+        TimerLocal timer;
+        timer.start();
         gat_tasks_[i]->process(nthr, sort);
-        // logger_() << "Task " << i << " finished in time: " << timer.stop() << " on thread:" << omp_get_thread_num() <<std::endl;
+#if LOG_LEVEL >= 3
+        logger_() << "Task " << i << " finished in time: " << timer.stop() << " on thread:" << omp_get_thread_num() <<std::endl;
+#endif
     }
 
-    // logger_.flush("Task processing:");
+#if LOG_LEVEL >= 3
+    logger_.flush("Task processing:");
+#endif
 
 }
 
@@ -1063,7 +1067,7 @@ void SupermerEncoder::encode(const std::vector<int>& dest, const DnaSeq& read){
 
         if(i == dest.size() || dest[i] != last_dst || cnt == max_supermer_len_ - KMER_SIZE + 1) {
             /* encode the supermer */
-            size_t len = cnt + KMER_SIZE - 1;
+            length_t len = cnt + KMER_SIZE - 1;
             (*tasks_[last_dst])
                     .get_length_buffer(tid_)
                     .push_back(len);
@@ -1113,6 +1117,14 @@ void HeavyHitterClassifier::classify(std::vector<std::shared_ptr<ScatteredTask>>
             total_size += task_sizes[i];
         }
         size_t avg_size = total_size / ntask;
+
+#if LOG_LEVEL >= 3
+    std::cout << "Average task size: " << avg_size << std::endl;
+    for (int i = 0; i < task_sizes.size(); i++) {
+        std::cout << "Task " << i << ": " << task_sizes[i]<<" kmers "<<std::endl;
+    }
+#endif
+
         for (int i = 0; i < ntask; i++) {
             if (task_sizes[i] > avg_size * UNBALANCED_RATIO) {
                 task_types[i] = 1;
@@ -1220,14 +1232,14 @@ void BalancedDispatcher::dispatch(MPI_Comm comm, std::vector<std::shared_ptr<Sca
         }
         size_t avg_size = total_size / nprocs;
 
-        double coe = 1.0;
+        double coe = 1.0 - DISPATCH_STEP;
         bool success = false;
         while( coe < DISPATCH_UPPER_COE ) {
-            coe += DISPATCH_STEP;
             if (try_dispatch(task_info, destinations, nprocs, avg_size, coe)) {
                 success = true;
                 break;
             }
+            coe += DISPATCH_STEP;
         }
         if (!success) {
             throw std::runtime_error("Cannot dispatch tasks. May be too unbalanced.");
