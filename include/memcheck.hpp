@@ -7,9 +7,7 @@
 #include <iostream>
 #include <string>
 
-int get_cluster_memory_usage_kb(long* vmrss_per_process, long* vmpeak_per_process, int root, int np);
-int get_global_memory_usage_kb(long* global_vmrss, long* global_vmpeak, int np);
 int get_free_memory_kb(size_t* memfree_kb);
-void print_mem_log(int nprocs, int myrank, std::string msg=std::string());
+size_t get_mem_gb(int nprocs, int myrank, std::string type);
 
 # endif

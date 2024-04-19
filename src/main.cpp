@@ -9,6 +9,7 @@
 #include "dnaseq.hpp"
 #include "kmerops.hpp"
 #include "compiletime.h"
+#include "memcheck.hpp"
 
 std::string fasta_fname;
 
@@ -74,6 +75,12 @@ int main(int argc, char **argv){
     timer_kcount.start();
 
     /* start kmer counting */
+    size_t vm = 0;
+    vm = get_mem_gb(nprocs, myrank, "VmRSS");
+    if (myrank == 0){
+        std::cout << "Memory usage (VmRSS): " << vm << " GB" << std::endl << std::endl;
+    }
+
     timer.start();
     auto tm = prepare_supermer(mydna, MPI_COMM_WORLD);
     timer.stop_and_log("prepare_supermer");
@@ -85,6 +92,11 @@ int main(int argc, char **argv){
     timer.start();
     auto kmerlist = filter_kmer(tm, MPI_COMM_WORLD);
     timer.stop_and_log("filter_kmer");
+
+    vm = get_mem_gb(nprocs, myrank, "VmHWM");
+    if (myrank == 0){
+        std::cout << "Peak memory usage (VmHWM): " << vm << " GB" << std::endl << std::endl;
+    }
 
     timer_kcount.stop_and_log("Overall kmer counting (Excluding I/O)");
 
