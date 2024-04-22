@@ -1,7 +1,7 @@
 # Kmer Size
 K?=31
 # Minimizer Size
-M?=13
+M?=17
 # Lower Kmer Frequency
 L?=15
 # Upper Kmer Frequency
@@ -17,18 +17,18 @@ T?=4
 # Max Thread Memory Bounded
 T2?=16
 # Average Task per Worker
-TPW?=2
+TPW?=3
 # SORTING OPTION (0: runtime decision, 1: paradis, 2: raduls)
 SORT?=0
 # Max Send Batch
-BATCH?=100000
+BATCH?=80000
 
 # Dispatch Upper Coefficient
 DISPATCH_UPPER = 1.5
 # Dispatch Step
 DISPATCH_STEP = 0.05
 # Unbalanced Threshold
-UNBALANCED_THRESHOLD = 2.5
+UNBALANCED_THRESHOLD = 2.3
 
 COMPILE_TIME_PARAMETERS=-DKMER_SIZE=$(K) -DMINIMIZER_SIZE=$(M) \
 	-DLOWER_KMER_FREQ=$(L) -DUPPER_KMER_FREQ=$(U) -DLOG_LEVEL=$(LOG) -DDEBUG=$(D) \
