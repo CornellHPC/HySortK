@@ -102,8 +102,17 @@ prepare_supermer(const DnaBuffer& myreads,
     timer.stop_and_log("(Inc) Supermer encoding");
 #endif
 
+#if PLAIN_CLASSIFIER == 1
+    PlainClassifier* classifier = new PlainClassifier();
+#else
     HeavyHitterClassifier* classifier = new HeavyHitterClassifier();
+#endif
+
+#if PLAIN_DISPATCHER == 1
+    RoundRobinDispatcher* dispatcher = new RoundRobinDispatcher();
+#else
     BalancedDispatcher* dispatcher = new BalancedDispatcher();
+#endif
 
 
     auto tm = std::make_shared<TaskManager>(classifier, dispatcher, comm, MAX_SEND_BATCH, MAX_SEND_BATCH - std::max((uint64_t)MAX_SUPERMER_LEN / 4, sizeof(KmerSeedStruct)), nthr_m);
@@ -1135,6 +1144,18 @@ void HeavyHitterClassifier::classify(std::vector<std::shared_ptr<ScatteredTask>>
     }
 
     MPI_Bcast(task_types.data(), ntask, MPI_INT, 0, comm);
+}
+
+void RoundRobinDispatcher::dispatch(MPI_Comm comm, std::vector<std::shared_ptr<ScatteredTask>>& tasks, std::vector<int>& destinations)  {
+    int myrank;
+    int nprocs;
+    MPI_Comm_rank(comm, &myrank);
+    MPI_Comm_size(comm, &nprocs);
+
+    destinations.resize(tasks.size(), -1);
+    for (int i = 0; i < tasks.size(); i++) {
+        destinations[i] = i % nprocs;
+    }
 }
 
 

@@ -337,6 +337,12 @@ public:
     virtual void dispatch(MPI_Comm comm, std::vector<std::shared_ptr<ScatteredTask>>& tasks, std::vector<int>& destinations) = 0;
 };
 
+/// @brief Dispatcher that will dispatch the tasks in a round-robin way
+class RoundRobinDispatcher : public TaskDispatcher {
+public:
+    void dispatch(MPI_Comm comm, std::vector<std::shared_ptr<ScatteredTask>>& tasks, std::vector<int>& destinations) override;
+};
+
 /// @brief Dispatcher that will dispatch the tasks in a balanced way
 class BalancedDispatcher : public TaskDispatcher {
 private:
