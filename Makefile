@@ -67,9 +67,9 @@ OBJECTS=obj/logger.o \
 		obj/memcheck.o 
 
 
-all: ukmerc
+all: hysortk
 
-ukmerc: obj/main.o $(OBJECTS)
+hysortk: obj/main.o $(OBJECTS)
 	$(MAKE) -C Raduls
 	$(COMPILER) $(OPT) $(LINK) -o $@ obj/sorting_network.o $^
 
@@ -88,4 +88,4 @@ obj/kmerops.o: src/kmerops.cpp include/kmerops.hpp include/kmer.hpp include/dnas
 obj/memcheck.o: src/memcheck.cpp include/memcheck.hpp
 
 clean:
-	rm -rf *.o obj/* ukmerc $(HOME)/bin/ukmerc
+	rm -rf *.o obj/* hysortk $(HOME)/bin/hysortk

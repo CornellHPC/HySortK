@@ -1,7 +1,7 @@
 #ifndef PARADIS_SORT_HPP
 #define PARADIS_SORT_HPP
 
-/* This code is taken from github https://github.com/odanivan/simple_paradis/tree/master. it is working, maybe we should rewrite it. */
+/* This code is taken from github https://github.com/odanivan/simple_paradis/tree/master. */
 
 #include <omp.h>
 #include <algorithm>
