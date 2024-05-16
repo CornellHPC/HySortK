@@ -240,8 +240,14 @@ DnaBuffer FastaIndex::getmydna() const
      * Every processor that calls @getmydna reads in its assigned chunk of data
      * into its temporary local storage buffer (meant for raw contents of file).
      */
-    MPI_File_read_at_all(fh, startpos, &readbuf[0], readbufsize, MPI_CHAR, MPI_STATUS_IGNORE);
-    MPI_File_close(&fh);
+    // MPI_File_read_at_all(fh, startpos, &readbuf[0], readbufsize, MPI_CHAR, MPI_STATUS_IGNORE);
+    // MPI_File_close(&fh);
+
+    std::ifstream file(get_fasta_fname().c_str(), std::ios::binary);
+    file.seekg(startpos, std::ios::beg);
+    file.read(&readbuf[0], readbufsize);
+    // MPI_FILE_READ_AT_ALL(fh, startpos, &readbuf[0], readbufsize, MPI_CHAR, MPI_STATUS_IGNORE);
+    file.close();
 
     size_t totbases = std::accumulate(readlens.begin(), readlens.end(), static_cast<size_t>(0), std::plus<size_t>{});
     size_t maxlen = *std::max_element(readlens.begin(), readlens.end());
