@@ -43,7 +43,10 @@ COMPILE_TIME_PARAMETERS=-DKMER_SIZE=$(K) -DMINIMIZER_SIZE=$(M) \
 	-DPLAIN_CLASSIFIER=$(PLAIN_CLASSIFIER) -DPLAIN_DISPATCHER=$(PLAIN_DISPATCHER)
 OPT=
 
-# TODO: check if M is less than K
+# Check if M is less than K
+ifneq ($(shell test $(M) -lt $(K) && echo 0 || echo 1), 0)
+$(error ERROR: MINIMIZER_SIZE (M) must be less than KMER_SIZE (K))
+endif
 
 ifeq ($(D), 1)
 OPT+=-g -O2 -fsanitize=address -fno-omit-frame-pointer
@@ -53,10 +56,14 @@ else
 OPT+=-O3
 endif
 
-FLAGS=-pthread -m64 -mavx2 -DTHREADED -fopenmp -std=c++17 -I./include -I./src -I./Raduls
+FLAGS=-pthread -m64 -mavx2 -DTHREADED -fopenmp -std=c++17 -I./include -I./src -I./dependency/Raduls -I./dependency/Paradis
 LINK=-lm -fopenmp -O3 -mavx2 -fno-ipa-ra -fno-tree-vrp -fno-tree-pre  -std=c++17 -lpthread -DTHREADED
 
+ifeq ($(NERSC_HOST), perlmutter)
 COMPILER=CC
+else
+COMPILER=CXX
+endif
 
 OBJECTS=obj/logger.o \
 		obj/dnaseq.o \
@@ -67,10 +74,23 @@ OBJECTS=obj/logger.o \
 		obj/memcheck.o 
 
 
-all: hysortk
+all: print hysortk
+
+print:
+	$(info ------ HySortK Compiletime Parameters ------ )
+	$(info LOG_LEVEL: $(LOG), DEBUG: $(D))
+	$(info KMER_SIZE: $(K), MINIMIZER_SIZE: $(M))
+	$(info LOWER_KMER_FREQ: $(L), UPPER_KMER_FREQ: $(U))
+	$(info THREAD_PER_WORKER: $(T), AVG_TASK_PER_WORKER: $(TPW))
+	$(info MAX_THREAD_MEMORY_BOUNDED: $(T2), MAX_SEND_BATCH: $(BATCH))
+	$(info DISPATCH_UPPER_COE: $(DISPATCH_UPPER), DISPATCH_STEP: $(DISPATCH_STEP))
+	$(info SORT: $(SORT) (0: Runtime decision, 1: PARADIS, 2: RADULS))
+	$(info UNBALANCED_RATIO: $(UNBALANCED_THRESHOLD))
+	$(info PLAIN_CLASSIFIER: $(PLAIN_CLASSIFIER), PLAIN_DISPATCHER: $(PLAIN_DISPATCHER))
+	$(info ------------------------------------------- )
 
 hysortk: obj/main.o $(OBJECTS)
-	$(MAKE) -C Raduls
+	$(MAKE) -C dependency/Raduls
 	$(COMPILER) $(OPT) $(LINK) -o $@ obj/sorting_network.o $^
 
 obj/%.o: src/%.cpp
@@ -84,7 +104,7 @@ obj/dnaseq.o: src/dnaseq.cpp include/dnaseq.hpp
 obj/dnabuffer.o: src/dnabuffer.cpp include/dnabuffer.hpp include/dnaseq.hpp
 obj/fastaindex.o: src/fastaindex.cpp include/fastaindex.hpp include/dnaseq.hpp include/dnabuffer.hpp
 obj/hashfuncs.o: src/hashfuncs.cpp include/hashfuncs.hpp
-obj/kmerops.o: src/kmerops.cpp include/kmerops.hpp include/kmer.hpp include/dnaseq.hpp include/logger.hpp include/timer.hpp include/dnabuffer.hpp include/paradissort.hpp include/memcheck.hpp 
+obj/kmerops.o: src/kmerops.cpp include/kmerops.hpp include/kmer.hpp include/dnaseq.hpp include/logger.hpp include/timer.hpp include/dnabuffer.hpp include/memcheck.hpp dependency/Paradis/paradissort.hpp
 obj/memcheck.o: src/memcheck.cpp include/memcheck.hpp
 
 clean:

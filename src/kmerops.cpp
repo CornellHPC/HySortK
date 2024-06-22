@@ -1382,16 +1382,7 @@ void sort_task(std::vector<T>& kmerseeds, int sort, int thr_per_worker, size_t& 
         }
         start_pos= cnt;
 
-        // std::cout<<"z2 "<<sizeof(T)<<" "<<TKmer::NBYTES<<" "<<seedcnt<<" "<<thr_per_worker<<std::endl;
-
-        // std::cout<<"some data"<<((size_t)start)<< " " << ((size_t)tmp)<< " " << kmerseeds[start_pos].kmer << std::endl;
-
-        // std::cout<<kmerseeds.size()<<" "<<seedcnt<<std::endl;
-
         raduls::RadixSortMSD(start, tmp, seedcnt, sizeof(T), TKmer::NBYTES, thr_per_worker);
-
-        // std::cout<<"pass here"<<((size_t)start)<< " " << ((size_t)tmp)<< " " << kmerseeds[start_pos].kmer << std::endl;
-
         
         delete[] (tmp_arr);
     }

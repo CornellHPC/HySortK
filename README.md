@@ -1,6 +1,6 @@
 ## README
 
-HySortK is a high performance distributed memory K-mer counter.
+HySortK is a high-performance distributed memory K-mer counter. Our paper "High-Performance Sorting-Based K-mer Counting in Distributed Memory with Flexible Hybrid Parallelism" was accepted to ICPP24 and will be available online soon!
 
 ### Build
 
@@ -25,7 +25,7 @@ Currently, the IO module needs an index file for the dataset. If you do not have
 module load spack
 spack load samtools
 # index the dataset
-smatools faidx ${PATH_TO_DATASET}
+samtools faidx ${PATH_TO_DATASET}
 ```
 
 To run the kmer counter, use your MPI/slurm runner with general parallelization settings followed by `./hysortk $PATH_TO_DATASE`. For example, to run on perlmutter (in the interactive environment) with 4 cpu nodes, use

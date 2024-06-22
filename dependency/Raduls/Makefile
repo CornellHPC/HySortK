@@ -1,6 +1,6 @@
 all: raduls
 	
-OBJ_DIR = ../obj
+OBJ_DIR = ../../obj
 
 CC 	= g++
 CFLAGS	= -IRaduls -Wall -fopenmp -O3 -mavx2 -fno-ipa-ra -fno-tree-vrp -fno-tree-pre -m64 -std=c++17
