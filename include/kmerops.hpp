@@ -20,70 +20,6 @@
  */
 #define PAD_SIZE 256        // For raduls
 
-typedef uint32_t PosInRead;
-typedef  int64_t ReadId;
-typedef uint32_t length_t;  // This can be changed to uint8_t, but no siginificant improvement is found
-
-
-/*
- * Basic Structs
- */
-
-/// @brief A class to store one k-mer and its count. 
-struct KmerListEntryS {
-    TKmer kmer;
-    uint64_t cnt;   // for padding considerations we use uint64_t
-    KmerListEntryS(TKmer kmer, int cnt) : kmer(kmer), cnt(cnt) {};
-    KmerListEntryS(const KmerListEntryS& o) : kmer(o.kmer), cnt(o.cnt) {};
-    KmerListEntryS(KmerListEntryS&& o) : kmer(std::move(o.kmer)), cnt(o.cnt) {};
-    KmerListEntryS() {};
-
-    KmerListEntryS& operator=(const KmerListEntryS& o)
-    {
-        kmer = o.kmer;
-        cnt = o.cnt;
-        return *this;
-    }
-
-    bool operator < (const KmerListEntryS& o) const { return kmer < o.kmer; }
-    bool operator == (const KmerListEntryS& o) const { return kmer == o.kmer; }
-    bool operator != (const KmerListEntryS& o) const { return kmer != o.kmer; }
-    int GetByte(int &i) const { return kmer.getByte(i); }
-};
-
-/// @brief A class to store a list of k-mers and their counts.
-typedef std::vector<KmerListEntryS> KmerListS;
-typedef std::vector<KmerListS> KmerListSVec;
-
-
-/// @brief Struct for a single kmer seed
-struct KmerSeedStruct{
-    TKmer kmer;      
-
-    KmerSeedStruct(TKmer kmer) : kmer(kmer) {};
-    KmerSeedStruct(const KmerSeedStruct& o) : kmer(o.kmer) {};
-    KmerSeedStruct(KmerSeedStruct&& o) :  
-        kmer(std::move(o.kmer)) {};
-    KmerSeedStruct() {};
-
-    int GetByte(int &i) const { return kmer.getByte(i); }
-    bool operator < (const KmerSeedStruct& o) const { return kmer < o.kmer; }
-    bool operator == (const KmerSeedStruct& o) const { return kmer == o.kmer; }
-    bool operator != (const KmerSeedStruct& o) const { return kmer != o.kmer; }
-
-    KmerSeedStruct& operator=(const KmerSeedStruct& o)
-    {
-        kmer = o.kmer;
-        return *this;
-    }
-};
-
-/// @brief A vector of vector of kmer seeds
-typedef std::vector<std::vector<KmerSeedStruct>> KmerSeedBuckets;
-/// @brief A vector of vector of vector of kmer seeds
-typedef std::vector<std::vector<std::vector<KmerSeedStruct>>> KmerSeedVecs;
-
-
 /* 
  * Assistant Functions
  */
@@ -151,8 +87,6 @@ struct Minimizer_Deque {
 /*
  * Task-related classes and functions
  */
-
-
 
 class ScatteredTask {
 protected:
@@ -467,9 +401,6 @@ void count_sorted_kmers(std::vector<KmerSeedStruct>& kmerseeds, KmerListS& kmerl
 
 /// @brief Count the sorted kmer lists
 void count_sorted_kmerlist(KmerListS& kmers, KmerListS& kmerlist, size_t start_pos, size_t seedcnt, size_t& valid_kmer, bool filter=true);
-
-/// @brief Print the kmer histogram
-void print_kmer_histogram(const KmerListS& kmerlist, MPI_Comm comm);
 
 std::shared_ptr<TaskManager> prepare_supermer(const DnaBuffer& myreads,
      MPI_Comm comm,

@@ -65,16 +65,20 @@ else
 COMPILER=CXX
 endif
 
+LINKER=ld
+
 OBJECTS=obj/logger.o \
 		obj/dnaseq.o \
 		obj/dnabuffer.o \
 		obj/fastaindex.o \
 		obj/hashfuncs.o \
 		obj/kmerops.o \
-		obj/memcheck.o 
+		obj/memcheck.o \
+		obj/hysortk.o
 
 
-all: print hysortk
+
+all: print lib
 
 print:
 	$(info ------ HySortK Compiletime Parameters ------ )
@@ -89,16 +93,20 @@ print:
 	$(info PLAIN_CLASSIFIER: $(PLAIN_CLASSIFIER), PLAIN_DISPATCHER: $(PLAIN_DISPATCHER))
 	$(info ------------------------------------------- )
 
-hysortk: obj/main.o $(OBJECTS)
+lib: $(OBJECTS)
 	$(MAKE) -C dependency/Raduls
-	$(COMPILER) $(OPT) $(LINK) -o $@ obj/sorting_network.o $^
+	$(LD) -r -o libhysortk.o $(OBJECTS) obj/sorting_network.o
 
 obj/%.o: src/%.cpp
 	@mkdir -p $(@D)
 	$(COMPILER) $(OPT) $(COMPILE_TIME_PARAMETERS) $(FLAGS) -c -o $@ $<
 
+standalone: all
+	$(COMPILER) $(OPT) $(COMPILE_TIME_PARAMETERS) $(FLAGS) -c -o obj/standalone.o standalone/main.cpp
+	$(COMPILER) $(OPT) $(COMPILE_TIME_PARAMETERS) $(FLAGS) -o hysortk obj/standalone.o libhysortk.o
 
-obj/main.o: src/main.cpp include/logger.hpp include/timer.hpp include/dnaseq.hpp include/dnabuffer.hpp include/fastaindex.hpp include/kmerops.hpp include/memcheck.hpp include/compiletime.h 
+
+obj/hysortk.o: src/hysortk.cpp include/logger.hpp include/timer.hpp include/dnaseq.hpp include/dnabuffer.hpp include/fastaindex.hpp include/kmerops.hpp include/memcheck.hpp include/compiletime.h 
 obj/logger.o: src/logger.cpp include/logger.hpp
 obj/dnaseq.o: src/dnaseq.cpp include/dnaseq.hpp
 obj/dnabuffer.o: src/dnabuffer.cpp include/dnabuffer.hpp include/dnaseq.hpp

@@ -1,17 +1,10 @@
-#include<iostream>
-#include<mpi.h>
-#include<omp.h>
-
+#include <iostream>
+#include<fstream>
+#include <mpi.h>
+#include <omp.h>
+#include "hysortk.hpp"
 #include "logger.hpp"
 #include "timer.hpp"
-#include "fastaindex.hpp"
-#include "dnabuffer.hpp"
-#include "dnaseq.hpp"
-#include "kmerops.hpp"
-#include "compiletime.h"
-#include "memcheck.hpp"
-
-std::string fasta_fname;
 
 int main(int argc, char **argv){
     MPI_Init(&argc, &argv);
@@ -21,11 +14,18 @@ int main(int argc, char **argv){
     std::ostringstream ss;
 
     if (argc < 2){
-        std::cerr << "Usage: " << argv[0] << " <fasta file>" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <fasta file> <output dir>(Optional)" << std::endl;
         exit(1);
     }
 
+    std::string fasta_fname;
+    std::string output_dir = "";
+
     fasta_fname = argv[1];
+
+    if (argc == 3){
+        output_dir = argv[2];
+    }
 
     int myrank;
     int nprocs;
@@ -51,57 +51,21 @@ int main(int argc, char **argv){
 
         log() << "Runtime Parameters:" << std::endl;
         log() << "      Fasta File: " << std::quoted(fasta_fname)<< std::endl;
+        log() << "      Output Directory: " << std::quoted(output_dir) << std::endl;
         log() << "      Nprocs:" << nprocs << std::endl;
         log() << "      Default Maximum Thread Count Per Process: " << omp_get_max_threads() << std::endl;
     }
     log.flush(log(), 0);
 
-    timer.start();
-    FastaIndex index(fasta_fname, MPI_COMM_WORLD);
-    ss << "reading " << std::quoted(index.get_faidx_fname()) << " and scattering to all MPI tasks";
-    timer.stop_and_log(ss.str().c_str());
+    auto dna = read_dna_buffer(fasta_fname, MPI_COMM_WORLD);
 
-    ss.clear(); ss.str("");
+    auto kmer_list = kmer_count(dna, MPI_COMM_WORLD);
 
+    print_kmer_histogram(*kmer_list, MPI_COMM_WORLD);
 
-    timer.start();
-    DnaBuffer mydna = index.getmydna();
-    ss << "reading and 2-bit encoding " << std::quoted(index.get_fasta_fname()) << " sequences in parallel";
-    timer.stop_and_log(ss.str().c_str());
-    ss.clear(); ss.str("");
-
-
-    Timer timer_kcount(MPI_COMM_WORLD);
-    timer_kcount.start();
-
-    /* start kmer counting */
-    size_t vm = 0;
-    vm = get_mem_gb(nprocs, myrank, "VmRSS");
-    if (myrank == 0){
-        std::cout << "Memory usage (VmRSS): " << vm << " GB" << std::endl << std::endl;
+    if (argc == 3){
+        write_output_file(*kmer_list, output_dir, MPI_COMM_WORLD);
     }
 
-    timer.start();
-    auto tm = prepare_supermer(mydna, MPI_COMM_WORLD);
-    timer.stop_and_log("prepare_supermer");
-
-    timer.start();
-    exchange_supermer(tm, MPI_COMM_WORLD);
-    timer.stop_and_log("exchange_supermer");
-
-    timer.start();
-    auto kmerlist = filter_kmer(tm, MPI_COMM_WORLD);
-    timer.stop_and_log("filter_kmer");
-
-    vm = get_mem_gb(nprocs, myrank, "VmHWM");
-    if (myrank == 0){
-        std::cout << "Peak memory usage (VmHWM): " << vm << " GB" << std::endl << std::endl;
-    }
-
-    timer_kcount.stop_and_log("Overall kmer counting (Excluding I/O)");
-
-    print_kmer_histogram(*kmerlist, MPI_COMM_WORLD);
-
-    MPI_Finalize();
     return 0;
 }

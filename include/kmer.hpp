@@ -338,4 +338,69 @@ using TKmer = typename std::conditional<(KMER_SIZE <= 32), Kmer<1>,
               typename std::conditional<(KMER_SIZE <= 64), Kmer<2>,
               typename std::conditional<(KMER_SIZE <= 96), Kmer<3>, Kmer<0>>::type>::type>::type;
 
+
+typedef uint32_t PosInRead;
+typedef  int64_t ReadId;
+typedef uint32_t length_t;  // This can be changed to uint8_t, but no siginificant improvement is found
+
+
+/*
+ * Basic Structs
+ */
+
+/// @brief A class to store one k-mer and its count. 
+struct KmerListEntryS {
+    TKmer kmer;
+    uint64_t cnt;   // for padding considerations we use uint64_t
+    KmerListEntryS(TKmer kmer, int cnt) : kmer(kmer), cnt(cnt) {};
+    KmerListEntryS(const KmerListEntryS& o) : kmer(o.kmer), cnt(o.cnt) {};
+    KmerListEntryS(KmerListEntryS&& o) : kmer(std::move(o.kmer)), cnt(o.cnt) {};
+    KmerListEntryS() {};
+
+    KmerListEntryS& operator=(const KmerListEntryS& o)
+    {
+        kmer = o.kmer;
+        cnt = o.cnt;
+        return *this;
+    }
+
+    bool operator < (const KmerListEntryS& o) const { return kmer < o.kmer; }
+    bool operator == (const KmerListEntryS& o) const { return kmer == o.kmer; }
+    bool operator != (const KmerListEntryS& o) const { return kmer != o.kmer; }
+    int GetByte(int &i) const { return kmer.getByte(i); }
+};
+
+/// @brief A class to store a list of k-mers and their counts.
+typedef std::vector<KmerListEntryS> KmerListS;
+typedef std::vector<KmerListS> KmerListSVec;
+
+
+/// @brief Struct for a single kmer seed
+struct KmerSeedStruct{
+    TKmer kmer;      
+
+    KmerSeedStruct(TKmer kmer) : kmer(kmer) {};
+    KmerSeedStruct(const KmerSeedStruct& o) : kmer(o.kmer) {};
+    KmerSeedStruct(KmerSeedStruct&& o) :  
+        kmer(std::move(o.kmer)) {};
+    KmerSeedStruct() {};
+
+    int GetByte(int &i) const { return kmer.getByte(i); }
+    bool operator < (const KmerSeedStruct& o) const { return kmer < o.kmer; }
+    bool operator == (const KmerSeedStruct& o) const { return kmer == o.kmer; }
+    bool operator != (const KmerSeedStruct& o) const { return kmer != o.kmer; }
+
+    KmerSeedStruct& operator=(const KmerSeedStruct& o)
+    {
+        kmer = o.kmer;
+        return *this;
+    }
+};
+
+/// @brief A vector of vector of kmer seeds
+typedef std::vector<std::vector<KmerSeedStruct>> KmerSeedBuckets;
+/// @brief A vector of vector of vector of kmer seeds
+typedef std::vector<std::vector<std::vector<KmerSeedStruct>>> KmerSeedVecs;
+
+
 #endif

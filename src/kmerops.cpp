@@ -1273,48 +1273,6 @@ void BalancedDispatcher::dispatch(MPI_Comm comm, std::vector<std::shared_ptr<Sca
 
 }
 
-void print_kmer_histogram(const KmerListS& kmerlist, MPI_Comm comm) {
-    #if LOG_LEVEL >= 2
-
-    Logger logger(comm);
-    size_t maxcount = std::accumulate(kmerlist.cbegin(), kmerlist.cend(), 0, [](size_t cur, const auto& entry) { return std::max(cur, entry.cnt); });
-
-    MPI_Allreduce(MPI_IN_PLACE, &maxcount, 1, MPI_INT, MPI_MAX, comm);
-
-    std::vector<int> histo(maxcount+1, 0);
-
-    for(size_t i = 0; i < kmerlist.size(); ++i)
-    {
-        int cnt = kmerlist[i].cnt;
-        assert(cnt >= 1);
-        histo[cnt]++;
-    }
-
-    MPI_Allreduce(MPI_IN_PLACE, histo.data(), maxcount+1, MPI_INT, MPI_SUM, comm);
-
-    int myrank;
-    MPI_Comm_rank(comm, &myrank);
-
-    if (!myrank)
-    {
-        std::cout << "#count\tnumkmers" << std::endl;
-
-        for (int i = 1; i < histo.size(); ++i)
-        {
-            if (histo[i] > 0)
-            {
-                std::cout << i << "\t" << histo[i] << std::endl;
-            }
-        }
-        std::cout << std::endl;
-    }
-
-    MPI_Barrier(comm);
-    #endif
-}
-
-
-
 int get_ppn() {
     char* ppnc = std::getenv("SLURM_TASKS_PER_NODE");
     if (ppnc == NULL) {
