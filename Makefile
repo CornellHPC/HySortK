@@ -98,7 +98,7 @@ print:
 
 lib: $(OBJECTS)
 	$(MAKE) -C dependency/Raduls
-	$(LINKER) -r -o libhysortk.o $(OBJECTS) obj/sorting_network.o
+	$(LINKER) -r -o obj/libhysortk.o $(OBJECTS) obj/sorting_network.o
 
 obj/%.o: src/%.cpp
 	@mkdir -p $(@D)
@@ -106,7 +106,7 @@ obj/%.o: src/%.cpp
 
 standalone: all
 	$(COMPILER) $(OPT) $(COMPILE_TIME_PARAMETERS) $(FLAGS) -c -o obj/standalone.o standalone/main.cpp
-	$(COMPILER) $(OPT) $(COMPILE_TIME_PARAMETERS) $(FLAGS) -o hysortk obj/standalone.o libhysortk.o
+	$(COMPILER) $(OPT) $(COMPILE_TIME_PARAMETERS) $(FLAGS) -o hysortk obj/standalone.o obj/libhysortk.o
 
 
 obj/hysortk.o: src/hysortk.cpp include/logger.hpp include/timer.hpp include/dnaseq.hpp include/dnabuffer.hpp include/fastaindex.hpp include/kmerops.hpp include/memcheck.hpp include/compiletime.h 

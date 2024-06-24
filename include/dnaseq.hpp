@@ -1,5 +1,5 @@
-#ifndef DNASEQ_H_
-#define DNASEQ_H_
+#ifndef HYSORTK_DNASEQ_H_
+#define HYSORTK_DNASEQ_H_
 
 #include <cstdint>
 #include <cstring>

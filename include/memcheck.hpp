@@ -1,5 +1,5 @@
-# ifndef MEMCHECK_HPP
-# define MEMCHECK_HPP
+# ifndef HYSORTK_MEMCHECK_HPP
+# define HYSORTK_MEMCHECK_HPP
 
 #include <mpi.h>
 #include <memory.h>

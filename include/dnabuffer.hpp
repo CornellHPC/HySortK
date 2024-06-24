@@ -1,5 +1,5 @@
-#ifndef DNABUFFER_H_
-#define DNABUFFER_H_
+#ifndef HYSORTK_DNABUFFER_H_
+#define HYSORTK_DNABUFFER_H_
 
 #include "dnaseq.hpp"
 #include <memory>

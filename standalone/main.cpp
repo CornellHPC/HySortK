@@ -60,7 +60,7 @@ int main(int argc, char **argv){
 
     auto dna = hysortk::read_dna_buffer(fasta_fname, MPI_COMM_WORLD);
 
-    auto kmer_list = hysortk::kmer_count(dna, MPI_COMM_WORLD);
+    auto kmer_list = hysortk::kmer_count(*dna, MPI_COMM_WORLD);
 
     hysortk::print_kmer_histogram(*kmer_list, MPI_COMM_WORLD);
 

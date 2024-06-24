@@ -1,5 +1,5 @@
-#ifndef COMPILE_TIME_H_
-#define COMPILE_TIME_H_
+#ifndef HYSORTK_COMPILE_TIME_H_
+#define HYSORTK_COMPILE_TIME_H_
 
 #include <limits>
 #include <cstdint>

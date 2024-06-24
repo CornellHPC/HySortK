@@ -1279,10 +1279,11 @@ void BalancedDispatcher::dispatch(MPI_Comm comm, std::vector<std::shared_ptr<Sca
     /* rank 0 dispatch the tasks */
     if (myrank == 0) {
         task_size = task_size_global;
+#if LOG_LEVEL >= 2
         for(int i = 0; i < task_size.size(); i++) {
             std::cout<<"Task "<<i<<" size: "<<task_size[i]<<std::endl;
         }
-
+#endif
         std::vector<TaskInfo> task_info;
         for (int i = 0; i < tasks.size(); i++) {
             task_info.push_back({i, task_size[i], tasks[i]->get_extra_coe()});
@@ -1370,10 +1371,8 @@ void sort_task(std::vector<T>& kmerseeds, int sort, int thr_per_worker, size_t& 
         uint8_t* tmp = tmp_arr + 256 - (size_t)tmp_arr % 256;
         raduls::CleanTmpArray(tmp, seedcnt, sizeof(T), thr_per_worker);
 
-        // std::cout<<"z1"<<std::endl;
         // RADULS needs padding. reserved in bucket assistant
         uint8_t* start = (uint8_t*)kmerseeds.data();
-        // std::cout<<"start is"<<(size_t)start<<std::endl;
         int cnt = 0;
         while( (size_t)start % 256 != 0) {
             start += sizeof(T);
@@ -1408,7 +1407,6 @@ void count_sorted_kmers(std::vector<KmerSeedStruct>& kmerseeds, KmerListS& kmerl
             continue;
         } 
 
-        //std::cerr<<"cur_kmer_cnt "<<cur_kmer_cnt<<std::endl;
         if (!filter || (cur_kmer_cnt >= LOWER_KMER_FREQ && cur_kmer_cnt <= UPPER_KMER_FREQ) ) {
             kmerlist.emplace_back(last_mer, cur_kmer_cnt);
 #if EXTENSION == 1

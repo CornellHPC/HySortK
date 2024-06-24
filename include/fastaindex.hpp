@@ -1,5 +1,5 @@
-#ifndef FASTA_INDEX_H_
-#define FASTA_INDEX_H_
+#ifndef HYSORTK_FASTA_INDEX_H_
+#define HYSORTK_FASTA_INDEX_H_
 
 #include <mpi.h>
 #include "dnabuffer.hpp"

@@ -1,5 +1,5 @@
-#ifndef LOGGER_H_
-#define LOGGER_H_
+#ifndef HYSORTK_LOGGER_H_
+#define HYSORTK_LOGGER_H_
 
 #include <mpi.h>
 #include <iostream>

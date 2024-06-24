@@ -1,5 +1,5 @@
-#ifndef HASH_FUNCS_H
-#define HASH_FUNCS_H
+#ifndef HYSORTK_HASH_FUNCS_H
+#define HYSORTK_HASH_FUNCS_H
 
 #include <cstdint>
 #include <cstddef>

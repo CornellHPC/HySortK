@@ -1,5 +1,5 @@
-#ifndef KMEROPS_H_
-#define KMEROPS_H_
+#ifndef HYSORTK_KMEROPS_H_
+#define HYSORTK_KMEROPS_H_
 
 #include <mpi.h>
 #include <omp.h>

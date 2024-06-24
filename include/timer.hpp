@@ -1,5 +1,5 @@
-#ifndef TIMER_H_
-#define TIMER_H_
+#ifndef HYSORTK_TIMER_H_
+#define HYSORTK_TIMER_H_
 
 #include <mpi.h>
 #include <iostream>

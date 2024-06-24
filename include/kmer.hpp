@@ -1,5 +1,5 @@
-#ifndef KMER_H_
-#define KMER_H_
+#ifndef HYSORTK_KMER_H_
+#define HYSORTK_KMER_H_
 
 #include <string>
 #include <array>
