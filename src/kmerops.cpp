@@ -62,14 +62,18 @@ prepare_supermer(const DnaBuffer& myreads,
     timer.start();
 #endif
 
-    size_t readoffset = numreads;      
-    MPI_Exscan(&numreads, &readoffset, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, comm);
-      
+    ReadId readoffset = numreads;      
+    MPI_Exscan(&numreads, &readoffset, 1, MPI_INT, MPI_SUM, comm);
+
+    if (myrank == 0) {
+        readoffset = 0;
+    }
+
     /* data structure for storing the data of different threads */
     ParallelData data(nthr_m);
 
     /* find the destinations of each kmer */
-    FindKmerDestinationsParallel(myreads, nthr_m, avg_tasks * nprocs, data);
+    FindKmerDestinationsParallel(myreads, nthr_m, avg_tasks * nprocs, data, readoffset);
 
     /* initialize the tasks */
     std::vector<std::shared_ptr<ScatteredTask>> sca_tasks;
@@ -93,7 +97,7 @@ prepare_supermer(const DnaBuffer& myreads,
         auto& readids = data.get_my_readids(tid);
 
         for (size_t i = 0; i < readids.size(); ++i) {
-            encoder.encode(destinations[i], myreads[readids[i]], readids[i]);
+            encoder.encode(destinations[i], myreads[readids[i] - readoffset], readids[i]);
         }
 
     }
@@ -887,7 +891,13 @@ void TaskManager::copy_results(KmerListS& kmerlist) {
     for (int i = 0; i < gat_tasks_.size(); i++) {
         auto& task = gat_tasks_[i];
         auto& result = task->get_kmerlist();
+#if EXTENSION == 0
         memcpy(kmerlist.data() + offset, result.data(), result.size() * sizeof(KmerListEntryS));
+#else
+        for (int j = 0; j < result.size(); j++) {
+            kmerlist[offset + j] = result[j];
+        }
+#endif
         offset += result.size();
     }
 
@@ -997,7 +1007,7 @@ bool TaskManager::parse_recvbufs(int stage) {
 }
 
 
-void FindKmerDestinationsParallel(const DnaBuffer& myreads, int nthreads, int tot_tasks, ParallelData& data) {
+void FindKmerDestinationsParallel(const DnaBuffer& myreads, int nthreads, int tot_tasks, ParallelData& data, ReadId readid_offset) {
     assert(nthreads > 0);
 
     #pragma omp parallel for num_threads(nthreads) schedule(static)
@@ -1005,7 +1015,7 @@ void FindKmerDestinationsParallel(const DnaBuffer& myreads, int nthreads, int to
         int tid = omp_get_thread_num();
 
         /* register the read for storage */
-        auto &dest = data.register_new_read(tid, i);
+        auto &dest = data.register_new_read(tid, i + readid_offset);
         if (myreads[i].size() < KMER_SIZE)
             continue;
         dest.reserve(myreads[i].size() - KMER_SIZE + 1);
@@ -1118,7 +1128,7 @@ void SupermerEncoder::encode(const std::vector<int>& dest, const DnaSeq& read, R
             uint32_t len = cnt + KMER_SIZE - 1;
             (*tasks_[last_dst])
                     .get_length_buffer(tid_)
-                    .emplace_back(cnt + KMER_SIZE - 1, readid, start_pos);    
+                    .emplace_back(cnt + KMER_SIZE - 1, start_pos, readid);    
 #endif
 
 
@@ -1335,10 +1345,14 @@ int sort_decision(size_t total_bytes, Logger& logger) {
     int sort = 0;
     if( SORT == 1 ) {
         sort = 1;
+#if LOG_LEVEL >= 2
         logger() << "Using PARADIS for sorting.";
+#endif
     } else if( SORT == 2 ) {
         sort = 2;
+#if LOG_LEVEL >= 2
         logger() << "Using RADULS for sorting.";
+#endif
     } else {
         /* SORT == 0, decide upon available memory */
         int ppn = get_ppn(); 
@@ -1350,9 +1364,13 @@ int sort_decision(size_t total_bytes, Logger& logger) {
             size_t memfree = memfree_kb * 921 / ppn ;   // 1024 * 0.9 = 921
             if (memfree >= total_bytes) {
                 sort = 2;
+#if LOG_LEVEL >= 2
                 logger() << "Enough memory available. Using RADULS for sorting." ;
+#endif
             } else {
+#if LOG_LEVEL >= 2
                 logger() << "Not enough memory available. Using PARADIS for sorting.";
+#endif
                 sort = 1;
             }
         }
@@ -1410,7 +1428,7 @@ void count_sorted_kmers(std::vector<KmerSeedStruct>& kmerseeds, KmerListS& kmerl
         if (!filter || (cur_kmer_cnt >= LOWER_KMER_FREQ && cur_kmer_cnt <= UPPER_KMER_FREQ) ) {
             kmerlist.emplace_back(last_mer, cur_kmer_cnt);
 #if EXTENSION == 1
-            auto list = kmerlist.back();
+            auto& list = kmerlist.back();
             list.pos.reserve(cur_kmer_cnt);
             list.rid.reserve(cur_kmer_cnt);
             for (size_t i = 0; i < cur_kmer_cnt; i++) {

@@ -71,7 +71,7 @@ public:
 
 
 /// @brief Function that parse the reads 
-void FindKmerDestinationsParallel(const DnaBuffer& myreads, int nthreads, int tot_tasks, ParallelData& data);
+void FindKmerDestinationsParallel(const DnaBuffer& myreads, int nthreads, int tot_tasks, ParallelData& data, ReadId readid_offset);
 
 
 /// @brief Assistant class to help determine the minimizers of kmers from a read
