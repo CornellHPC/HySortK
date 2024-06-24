@@ -346,8 +346,18 @@ using TKmer = typename std::conditional<(KMER_SIZE <= 32), Kmer<1>,
 
 
 typedef uint32_t PosInRead;
-typedef  int64_t ReadId;
+typedef  int32_t ReadId;
+#if EXTENSION == 0
 typedef uint32_t length_t;  // This can be changed to uint8_t, but no siginificant improvement is found
+#else
+struct length_t {
+    uint32_t len;
+    PosInRead pos;
+    ReadId rid;
+    length_t(uint32_t len, PosInRead pos, ReadId rid) : len(len), pos(pos), rid(rid) {};
+    length_t() {};
+};
+#endif
 
 
 /*
@@ -357,6 +367,7 @@ typedef uint32_t length_t;  // This can be changed to uint8_t, but no siginifica
 /// @brief A class to store one k-mer and its count. 
 struct KmerListEntryS {
     TKmer kmer;
+#if EXTENSION == 0
     uint64_t cnt;   // for padding considerations we use uint64_t
     KmerListEntryS(TKmer kmer, int cnt) : kmer(kmer), cnt(cnt) {};
     KmerListEntryS(const KmerListEntryS& o) : kmer(o.kmer), cnt(o.cnt) {};
@@ -369,6 +380,25 @@ struct KmerListEntryS {
         cnt = o.cnt;
         return *this;
     }
+#else
+    uint64_t cnt;
+    std::vector<PosInRead> pos;
+    std::vector<ReadId> rid;
+    KmerListEntryS(TKmer kmer, int cnt) : kmer(kmer), cnt(cnt) {};
+    KmerListEntryS(TKmer kmer, int cnt, PosInRead pos, ReadId rid) : kmer(kmer), cnt(cnt), pos({pos}), rid({rid}) {};
+    KmerListEntryS(const KmerListEntryS& o) : kmer(o.kmer), cnt(o.cnt), pos(o.pos), rid(o.rid) {};
+    KmerListEntryS(KmerListEntryS&& o) : kmer(std::move(o.kmer)), cnt(o.cnt), pos(std::move(o.pos)), rid(std::move(o.rid)) {};
+    KmerListEntryS() {};
+
+    KmerListEntryS& operator=(const KmerListEntryS& o)
+    {
+        kmer = o.kmer;
+        cnt = o.cnt;
+        pos = o.pos;
+        rid = o.rid;
+        return *this;
+    }
+#endif
 
     bool operator < (const KmerListEntryS& o) const { return kmer < o.kmer; }
     bool operator == (const KmerListEntryS& o) const { return kmer == o.kmer; }
@@ -384,23 +414,38 @@ typedef std::vector<KmerListS> KmerListSVec;
 /// @brief Struct for a single kmer seed
 struct KmerSeedStruct{
     TKmer kmer;      
-
+#if EXTENSION == 0
     KmerSeedStruct(TKmer kmer) : kmer(kmer) {};
     KmerSeedStruct(const KmerSeedStruct& o) : kmer(o.kmer) {};
     KmerSeedStruct(KmerSeedStruct&& o) :  
         kmer(std::move(o.kmer)) {};
     KmerSeedStruct() {};
-
-    int GetByte(int &i) const { return kmer.getByte(i); }
-    bool operator < (const KmerSeedStruct& o) const { return kmer < o.kmer; }
-    bool operator == (const KmerSeedStruct& o) const { return kmer == o.kmer; }
-    bool operator != (const KmerSeedStruct& o) const { return kmer != o.kmer; }
-
     KmerSeedStruct& operator=(const KmerSeedStruct& o)
     {
         kmer = o.kmer;
         return *this;
     }
+#else
+    PosInRead pos;
+    ReadId rid;
+    KmerSeedStruct(TKmer kmer, PosInRead pos, ReadId rid) : kmer(kmer), pos(pos), rid(rid) {};
+    KmerSeedStruct(const KmerSeedStruct& o) : kmer(o.kmer), pos(o.pos), rid(o.rid) {};
+    KmerSeedStruct(KmerSeedStruct&& o) :  
+        kmer(std::move(o.kmer)), pos(o.pos), rid(o.rid) {};
+    KmerSeedStruct() {};
+    KmerSeedStruct& operator=(const KmerSeedStruct& o)
+    {
+        kmer = o.kmer;
+        pos = o.pos;
+        rid = o.rid;
+        return *this;
+    }
+#endif
+
+    int GetByte(int &i) const { return kmer.getByte(i); }
+    bool operator < (const KmerSeedStruct& o) const { return kmer < o.kmer; }
+    bool operator == (const KmerSeedStruct& o) const { return kmer == o.kmer; }
+    bool operator != (const KmerSeedStruct& o) const { return kmer != o.kmer; }
 };
 
 /// @brief A vector of vector of kmer seeds

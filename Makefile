@@ -6,6 +6,8 @@ M?=17
 L?=15
 # Upper Kmer Frequency
 U?=40
+# Extension Information
+EXT?=0
 
 # Log Level (1, 2, 3, 4)
 LOG?=2
@@ -40,7 +42,8 @@ COMPILE_TIME_PARAMETERS=-DKMER_SIZE=$(K) -DMINIMIZER_SIZE=$(M) \
 	-DSORT=$(SORT) -DAVG_TASK_PER_WORKER=$(TPW) \
 	-DDISPATCH_UPPER_COE=$(DISPATCH_UPPER) -DDISPATCH_STEP=$(DISPATCH_STEP) \
 	-DUNBALANCED_RATIO=$(UNBALANCED_THRESHOLD) \
-	-DPLAIN_CLASSIFIER=$(PLAIN_CLASSIFIER) -DPLAIN_DISPATCHER=$(PLAIN_DISPATCHER)
+	-DPLAIN_CLASSIFIER=$(PLAIN_CLASSIFIER) -DPLAIN_DISPATCHER=$(PLAIN_DISPATCHER) \
+	-DEXTENSION=$(EXT)
 OPT=
 
 # Check if M is less than K
@@ -83,7 +86,7 @@ all: print lib
 print:
 	$(info ------ HySortK Compiletime Parameters ------ )
 	$(info LOG_LEVEL: $(LOG), DEBUG: $(D))
-	$(info KMER_SIZE: $(K), MINIMIZER_SIZE: $(M))
+	$(info KMER_SIZE: $(K), MINIMIZER_SIZE: $(M), EXTENSION: $(EXT))
 	$(info LOWER_KMER_FREQ: $(L), UPPER_KMER_FREQ: $(U))
 	$(info THREAD_PER_WORKER: $(T), AVG_TASK_PER_WORKER: $(TPW))
 	$(info MAX_THREAD_MEMORY_BOUNDED: $(T2), MAX_SEND_BATCH: $(BATCH))
@@ -95,7 +98,7 @@ print:
 
 lib: $(OBJECTS)
 	$(MAKE) -C dependency/Raduls
-	$(LD) -r -o libhysortk.o $(OBJECTS) obj/sorting_network.o
+	$(LINKER) -r -o libhysortk.o $(OBJECTS) obj/sorting_network.o
 
 obj/%.o: src/%.cpp
 	@mkdir -p $(@D)

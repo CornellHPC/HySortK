@@ -59,13 +59,13 @@ class ParallelData{
 private:
     int nthr;
     std::vector<std::vector<std::vector<int>>> destinations;
-    std::vector<std::vector<uint64_t>> readids;
+    std::vector<std::vector<ReadId>> readids;
 public:
     ParallelData(int nthr);
 
     std::vector<std::vector<int>>& get_my_destinations(int tid);
-    std::vector<uint64_t>& get_my_readids(int tid);
-    std::vector<int>& register_new_read (int tid, uint64_t readid);
+    std::vector<ReadId>& get_my_readids(int tid);
+    std::vector<int>& register_new_read (int tid, ReadId readid);
 
 };
 
@@ -244,7 +244,7 @@ struct SupermerEncoder{
     void copy_bits(std::vector<uint8_t>& dst, const uint8_t* src, uint64_t start_pos, int len);
 
     /* encode the supermer to the buffer */
-    void encode(const std::vector<int>& dest, const DnaSeq& read);
+    void encode(const std::vector<int>& dest, const DnaSeq& read, ReadId readid);
 };
 
 

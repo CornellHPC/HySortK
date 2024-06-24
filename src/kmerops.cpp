@@ -93,7 +93,7 @@ prepare_supermer(const DnaBuffer& myreads,
         auto& readids = data.get_my_readids(tid);
 
         for (size_t i = 0; i < readids.size(); ++i) {
-            encoder.encode(destinations[i], myreads[readids[i]]);
+            encoder.encode(destinations[i], myreads[readids[i]], readids[i]);
         }
 
     }
@@ -102,7 +102,7 @@ prepare_supermer(const DnaBuffer& myreads,
     timer.stop_and_log("(Inc) Supermer encoding");
 #endif
 
-#if PLAIN_CLASSIFIER == 1
+#if PLAIN_CLASSIFIER == 1 || EXTENSION == 1
     PlainClassifier* classifier = new PlainClassifier();
 #else
     HeavyHitterClassifier* classifier = new HeavyHitterClassifier();
@@ -256,7 +256,13 @@ ScatteredSupermers::ScatteredSupermers(int taskid, int nthr) :
 size_t ScatteredSupermers::get_size_kmer() {
     size_t size = 0;
     for (int i = 0; i < nthr_; i++) {
+#if EXTENSION == 0
         size += std::accumulate(lengths_[i].begin(), lengths_[i].end(), 0);
+#else
+        for (int j = 0; j < lengths_[i].size(); j++) {
+            size += lengths_[i][j].len;
+        }
+#endif
         size -= ( KMER_SIZE - 1 ) * lengths_[i].size() ;
     }
     return size;
@@ -315,7 +321,11 @@ bool ScatteredSupermers::write_to_buffer_stage2(uint8_t* buffer, size_t &current
         size_t idx = working_idx_;
 
         while(current_count + copy_len <= max_count && idx < lengths.size()) {
+#if EXTENSION == 0
             copy_len += cnt_bytes(lengths[idx]);
+#else
+            copy_len += cnt_bytes(lengths[idx].len);
+#endif
             idx++;
         }
 
@@ -348,7 +358,7 @@ bool ScatteredSupermers::write_to_buffer(uint8_t* buffer, size_t& current_count,
 
 ScatteredKmerList::ScatteredKmerList(std::shared_ptr<ScatteredSupermers> supermer_task, int thr_per_worker, size_t stage1_size) : 
         working_idx_(0), stage1_size_(stage1_size),  ScatteredTask(supermer_task->get_taskid(), 2) {
-
+#if EXTENSION == 0
     std::vector<KmerSeedStruct> kmerseeds;
 
     int nthr = supermer_task->get_nthr();
@@ -380,6 +390,10 @@ ScatteredKmerList::ScatteredKmerList(std::shared_ptr<ScatteredSupermers> superme
     count_sorted_kmers(kmerseeds, kmerlist_, start_pos, total_len, valid_kmer, false);
 
     stage1_size_ = std::min(stage1_size_, kmerlist_.size());
+#else
+    std::cerr << "Extension is not supported for ScatteredKmerList." << std::endl;
+    exit(1);
+#endif
 }
 
 
@@ -421,7 +435,14 @@ void GatheredSupermer::init_exchange(int stage)  {
     if (stage == 2) {
         kmer_count_.resize(count_.size(), 0);
         for (int i = 0; i < count_.size(); i++) {
+#if EXTENSION == 0
             kmer_count_[i] = std::accumulate(length_.begin() + start_idx_[i], length_.begin() + start_idx_[i+1], 0);
+#else
+            kmer_count_[i] = 0;
+            for (int j = start_idx_[i]; j < start_idx_[i+1]; j++) {
+                kmer_count_[i] += length_[j].len;
+            }
+#endif
             kmer_count_[i] -= (KMER_SIZE - 1) * count_[i];
 
         }
@@ -464,14 +485,26 @@ bool GatheredSupermer::receive_from_buffer_stage2(uint8_t* buffer, int src_proce
 
     while(ccnt <= max_count && current_idx < start_idx_[src_process+1]) {
 
-        auto seq = DnaSeq(length_[current_idx], buffer + ccnt);
+#if EXTENSION == 0
+        auto len = length_[current_idx];
+#else
+        auto len = length_[current_idx].len;
+        auto rid = length_[current_idx].rid;
+        auto pos = length_[current_idx].pos;
+#endif
+
+        auto seq = DnaSeq(len, buffer + ccnt);
         auto repmers = TKmer::GetRepKmers(seq);
 
-        for (int i = 0; i < length_[current_idx] - KMER_SIZE + 1; i++) {
+        for (int i = 0; i < len - KMER_SIZE + 1; i++) {
+#if EXTENSION == 0
             kmer_[current_kmer_idx++] = KmerSeedStruct(repmers[i]);
+#else
+            kmer_[current_kmer_idx++] = KmerSeedStruct(repmers[i], pos + i, rid);
+#endif
         }
 
-        ccnt += cnt_bytes(length_[current_idx]);
+        ccnt += cnt_bytes(len);
         current_idx++;
     }
 
@@ -968,7 +1001,7 @@ void FindKmerDestinationsParallel(const DnaBuffer& myreads, int nthreads, int to
     assert(nthreads > 0);
 
     #pragma omp parallel for num_threads(nthreads) schedule(static)
-    for (size_t i = 0; i < myreads.size(); ++i) {
+    for (ReadId i = 0; i < myreads.size(); ++i) {
         int tid = omp_get_thread_num();
 
         /* register the read for storage */
@@ -1040,11 +1073,11 @@ std::vector<std::vector<int>>& ParallelData::get_my_destinations(int tid) {
     return destinations[tid];
 }
 
-std::vector<uint64_t>& ParallelData::get_my_readids(int tid) {
+std::vector<ReadId>& ParallelData::get_my_readids(int tid) {
     return readids[tid];
 }
 
-std::vector<int>& ParallelData::register_new_read(int tid, uint64_t readid) {
+std::vector<int>& ParallelData::register_new_read(int tid, ReadId readid) {
     destinations[tid].push_back(std::vector<int>());
     readids[tid].push_back(readid);
     return destinations[tid].back();
@@ -1063,7 +1096,7 @@ void SupermerEncoder::copy_bits(std::vector<uint8_t>& dst, const uint8_t* src, u
     }
 }
 
-void SupermerEncoder::encode(const std::vector<int>& dest, const DnaSeq& read){
+void SupermerEncoder::encode(const std::vector<int>& dest, const DnaSeq& read, ReadId readid) {
     if (read.size() < KMER_SIZE) return;
 
     /* initial conditions */
@@ -1076,10 +1109,19 @@ void SupermerEncoder::encode(const std::vector<int>& dest, const DnaSeq& read){
 
         if(i == dest.size() || dest[i] != last_dst || cnt == max_supermer_len_ - KMER_SIZE + 1) {
             /* encode the supermer */
+#if EXTENSION == 0
             length_t len = cnt + KMER_SIZE - 1;
             (*tasks_[last_dst])
                     .get_length_buffer(tid_)
                     .push_back(len);
+#else
+            uint32_t len = cnt + KMER_SIZE - 1;
+            (*tasks_[last_dst])
+                    .get_length_buffer(tid_)
+                    .emplace_back(cnt + KMER_SIZE - 1, readid, start_pos);    
+#endif
+
+
             auto& supermer_buffer = (*tasks_[last_dst])
                     .get_supermer_buffer(tid_);
             copy_bits(supermer_buffer, read.data(), start_pos, len);
@@ -1369,6 +1411,15 @@ void count_sorted_kmers(std::vector<KmerSeedStruct>& kmerseeds, KmerListS& kmerl
         //std::cerr<<"cur_kmer_cnt "<<cur_kmer_cnt<<std::endl;
         if (!filter || (cur_kmer_cnt >= LOWER_KMER_FREQ && cur_kmer_cnt <= UPPER_KMER_FREQ) ) {
             kmerlist.emplace_back(last_mer, cur_kmer_cnt);
+#if EXTENSION == 1
+            auto list = kmerlist.back();
+            list.pos.reserve(cur_kmer_cnt);
+            list.rid.reserve(cur_kmer_cnt);
+            for (size_t i = 0; i < cur_kmer_cnt; i++) {
+                list.pos.push_back(kmerseeds[idx - cur_kmer_cnt + i].pos);
+                list.rid.push_back(kmerseeds[idx - cur_kmer_cnt + i].rid);
+            }
+#endif
             valid_kmer++;
         }
 
@@ -1378,6 +1429,7 @@ void count_sorted_kmers(std::vector<KmerSeedStruct>& kmerseeds, KmerListS& kmerl
 }
 
 void count_sorted_kmerlist(KmerListS& kmers, KmerListS& kmerlist, size_t start_pos, size_t seedcnt, size_t& valid_kmer, bool filter) {
+#if EXTENSION == 0
     kmerlist.clear();
     kmerlist.reserve(seedcnt / LOWER_KMER_FREQ);
     valid_kmer = 0;
@@ -1404,6 +1456,10 @@ void count_sorted_kmerlist(KmerListS& kmers, KmerListS& kmerlist, size_t start_p
         cur_kmer_cnt = kmers[idx].cnt;
         last_mer = cur_mer;
     }
+#else
+    std::cerr<<"count_sorted_kmerlist not implemented for hysortk with extension information"<<std::endl;
+    MPI_Abort(MPI_COMM_WORLD, 1);
+#endif
 }
 
 } // namespace hysortk

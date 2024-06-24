@@ -35,6 +35,7 @@ int main(int argc, char **argv){
     if (myrank == 0){
         log() << "Compiling Parameters:" << std::endl;
         log() << "      KMER_SIZE: " << KMER_SIZE << std::endl;
+        log() << "      EXTENSION: " << EXTENSION << std::endl;
         log() << "      MINIMIZER_SIZE: " << MINIMIZER_SIZE << std::endl;
         log() << "      THREAD_PER_WORKER: " << THREAD_PER_WORKER << std::endl;
         log() << "      MAX_THREAD_MEMORY_BOUNDED: " << MAX_THREAD_MEMORY_BOUNDED << std::endl;
