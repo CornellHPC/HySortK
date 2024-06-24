@@ -9,8 +9,8 @@
 int main(int argc, char **argv){
     MPI_Init(&argc, &argv);
 
-    Logger log(MPI_COMM_WORLD);
-    Timer timer(MPI_COMM_WORLD);
+    hysortk::Logger log(MPI_COMM_WORLD);
+    hysortk::Timer timer(MPI_COMM_WORLD);
     std::ostringstream ss;
 
     if (argc < 2){
@@ -57,14 +57,14 @@ int main(int argc, char **argv){
     }
     log.flush(log(), 0);
 
-    auto dna = read_dna_buffer(fasta_fname, MPI_COMM_WORLD);
+    auto dna = hysortk::read_dna_buffer(fasta_fname, MPI_COMM_WORLD);
 
-    auto kmer_list = kmer_count(dna, MPI_COMM_WORLD);
+    auto kmer_list = hysortk::kmer_count(dna, MPI_COMM_WORLD);
 
-    print_kmer_histogram(*kmer_list, MPI_COMM_WORLD);
+    hysortk::print_kmer_histogram(*kmer_list, MPI_COMM_WORLD);
 
     if (argc == 3){
-        write_output_file(*kmer_list, output_dir, MPI_COMM_WORLD);
+        hysortk::write_output_file(*kmer_list, output_dir, MPI_COMM_WORLD);
     }
 
     return 0;

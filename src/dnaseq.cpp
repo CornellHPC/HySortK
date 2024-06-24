@@ -4,6 +4,8 @@
 #include <vector>
 #include <cmath>
 
+namespace hysortk {
+
 void DnaSeq::compress(char const *s)
 {
     const size_t nbytes = numbytes();
@@ -76,3 +78,5 @@ bool DnaSeq::operator<(const DnaSeq& rhs)
 
     return ((*this)[i] < rhs[i]);
 }
+
+} // namespace hysortk

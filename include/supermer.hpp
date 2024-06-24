@@ -15,6 +15,8 @@
 #include "hashfuncs.hpp"
 #include "dnaseq.hpp"
 
+namespace hysortk {
+
 #define MAX_SUPERMER_LEN 250
 
 template <int MLONGS>
@@ -71,27 +73,29 @@ private:
     void set_kmer(char const *s, bool const revcomp = false);
 };
 
+} // namespace hysortk
+
+namespace std {
+
 template <int MLONGS>
-std::ostream& operator<<(std::ostream& os, const Mmer<MLONGS>& kmer)
+std::ostream& operator<<(std::ostream& os, const hysortk::Mmer<MLONGS>& kmer)
 {
     os << MINIMIZER_SIZE << "-mer(" << kmer.GetString() << ")";
     return os;
 }
 
-namespace std
-{
-    template <int MLONGS> struct hash<Mmer<MLONGS>>
+    template <int MLONGS> struct hash<hysortk::Mmer<MLONGS>>
     {
-        size_t operator()(const Mmer<MLONGS>& kmer) const
+        size_t operator()(const hysortk::Mmer<MLONGS>& kmer) const
         {
             auto myhash = kmer.GetHash();
             return myhash;
         }
     };
 
-    template <int MLONGS> struct less<Mmer<MLONGS>>
+    template <int MLONGS> struct less<hysortk::Mmer<MLONGS>>
     {
-        bool operator()(const Mmer<MLONGS>& k1, const Mmer<MLONGS>& k2) const
+        bool operator()(const hysortk::Mmer<MLONGS>& k1, const hysortk::Mmer<MLONGS>& k2) const
         {
             return k1 < k2;
         }
@@ -124,6 +128,8 @@ static uint64_t tetramer_twin(const uint8_t code)
     return static_cast<uint64_t>(tetramer_lookup_code[code]);
 }
 */
+
+namespace hysortk {
 
 template <int MLONGS>
 Mmer<MLONGS>::Mmer() : longs{} {}
@@ -339,5 +345,7 @@ std::vector<Mmer<MLONGS>> Mmer<MLONGS>::GetRepMmers(const DnaSeq& s)
 using TMmer = typename std::conditional<(MINIMIZER_SIZE <= 32), Mmer<1>,
               typename std::conditional<(MINIMIZER_SIZE <= 64), Mmer<2>,
               typename std::conditional<(MINIMIZER_SIZE <= 96), Mmer<3>, Mmer<0>>::type>::type>::type;
+
+} // namespace hysortk
 
 #endif

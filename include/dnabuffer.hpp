@@ -9,6 +9,8 @@
 #include <cstddef>
 #include <string>
 
+namespace hysortk {
+
 class DnaBuffer
 {
 public:
@@ -43,5 +45,7 @@ private:
     uint8_t *buf;
     std::vector<DnaSeq> sequences;
 };
+
+} // namespace hysortk
 
 #endif

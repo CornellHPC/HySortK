@@ -2,6 +2,8 @@
 #include <iostream>
 #include <numeric>
 
+namespace hysortk {
+
 Logger::Logger(MPI_Comm comm) : logstream(new std::ostringstream()), comm(comm)
 {
     MPI_Comm_rank(comm, &myrank);
@@ -156,5 +158,7 @@ void Logger::flush(char const *label, int prank)
 
     MPI_Barrier(comm);
 }
+
+} // namespace hysortk
 
 

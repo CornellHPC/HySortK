@@ -7,7 +7,11 @@
 #include <iostream>
 #include <string>
 
+namespace hysortk {
+
 int get_free_memory_kb(size_t* memfree_kb);
 size_t get_mem_gb(int nprocs, int myrank, std::string type);
+
+} // namespace hysortk
 
 # endif

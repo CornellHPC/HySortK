@@ -6,6 +6,8 @@
 #include <chrono>
 #include <iomanip>
 
+namespace hysortk {
+
 struct Timer
 {
     bool isroot;
@@ -91,5 +93,7 @@ struct TimerLocal
         return elapsed;
     }
 };
+
+} // namespace hysortk
 
 #endif

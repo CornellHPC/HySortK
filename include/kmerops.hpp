@@ -14,6 +14,7 @@
 
 #include "supermer.hpp"
 
+namespace hysortk {
 
 /*
  * Constants
@@ -411,5 +412,6 @@ void exchange_supermer(std::shared_ptr<TaskManager> task_manager, MPI_Comm comm,
 
 std::unique_ptr<KmerListS> filter_kmer(std::shared_ptr<TaskManager> task_manager, MPI_Comm comm, int avg_thr_per_worker=THREAD_PER_WORKER);
 
+} // namespace hysortk
 
 #endif // KMEROPS_H_

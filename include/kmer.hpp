@@ -10,10 +10,13 @@
 #include <cstring>
 #include <algorithm>
 #include <limits>
+#include <functional>
 #include "compiletime.h"
 #include "dnaseq.hpp"
 #include "hashfuncs.hpp"
 #include "dnaseq.hpp"
+
+namespace hysortk {
 
 template <int NLONGS>
 class Kmer
@@ -77,26 +80,29 @@ std::ostream& operator<<(std::ostream& os, const Kmer<NLONGS>& kmer)
     return os;
 }
 
+}
+
 namespace std
 {
-    template <int NLONGS> struct hash<Kmer<NLONGS>>
+    template <int NLONGS> struct hash<hysortk::Kmer<NLONGS>>
     {
-        size_t operator()(const Kmer<NLONGS>& kmer) const
+        size_t operator()(const hysortk::Kmer<NLONGS>& kmer) const
         {
             auto myhash = kmer.GetHash();
             return myhash;
         }
     };
 
-    template <int NLONGS> struct less<Kmer<NLONGS>>
+    template <int NLONGS> struct less<hysortk::Kmer<NLONGS>>
     {
-        bool operator()(const Kmer<NLONGS>& k1, const Kmer<NLONGS>& k2) const
+        bool operator()(const hysortk::Kmer<NLONGS>& k1, const hysortk::Kmer<NLONGS>& k2) const
         {
             return k1 < k2;
         }
     };
 }
 
+namespace hysortk {
 
 static uint64_t tetramer_twin(const uint8_t code)
 {
@@ -402,5 +408,6 @@ typedef std::vector<std::vector<KmerSeedStruct>> KmerSeedBuckets;
 /// @brief A vector of vector of vector of kmer seeds
 typedef std::vector<std::vector<std::vector<KmerSeedStruct>>> KmerSeedVecs;
 
+} // namespace hysortk
 
 #endif

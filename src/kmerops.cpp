@@ -18,7 +18,7 @@
 #include <deque>
 #include <stdexcept>
 
-
+namespace hysortk {
 
 std::shared_ptr<TaskManager>
 prepare_supermer(const DnaBuffer& myreads,
@@ -1405,3 +1405,5 @@ void count_sorted_kmerlist(KmerListS& kmers, KmerListS& kmerlist, size_t start_p
         last_mer = cur_mer;
     }
 }
+
+} // namespace hysortk

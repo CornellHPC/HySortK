@@ -5,6 +5,8 @@
 #include "kmer.hpp"
 #include <mpi.h>
 
+namespace hysortk {
+
 std::shared_ptr<DnaBuffer> read_dna_buffer(const std::string& fasta_fname, MPI_Comm comm);
 
 std::unique_ptr<KmerListS> kmer_count(std::shared_ptr<DnaBuffer> mydna, MPI_Comm comm);
@@ -12,6 +14,8 @@ std::unique_ptr<KmerListS> kmer_count(std::shared_ptr<DnaBuffer> mydna, MPI_Comm
 void print_kmer_histogram(const KmerListS& kmerlist, MPI_Comm comm);
 
 void write_output_file(const KmerListS& kmerlist, const std::string& output_dir, MPI_Comm comm);
+
+} // namespace hysortk
 
 
 #endif

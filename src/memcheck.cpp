@@ -2,6 +2,8 @@
 #include "memcheck.hpp"
 #include <iostream>
 
+namespace hysortk {
+
 int get_memory_usage_kb(long* vm_kb, std::string type)
 {
     /* Get the the current process' status file from the proc filesystem */
@@ -102,3 +104,5 @@ size_t get_mem_gb(int nprocs, int myrank, std::string type){
     }
     return vm_total;
 }
+
+} // namespace hysortk

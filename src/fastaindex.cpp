@@ -13,6 +13,8 @@
 #include <mpi.h>
 #include <cassert>
 
+namespace hysortk {
+
 using Record = typename FastaIndex::Record;
 
 Record FastaIndex::get_faidx_record(const std::string& line, std::string& name)
@@ -301,3 +303,5 @@ DnaBuffer FastaIndex::getmydna() const
 
     return dnabuf;
 }
+
+} // namespace hysortk

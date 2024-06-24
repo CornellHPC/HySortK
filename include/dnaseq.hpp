@@ -28,6 +28,8 @@
  * this later but right now I don't see any reason to.
  */
 
+namespace hysortk {
+
 class DnaSeq
 {
 public:
@@ -168,5 +170,7 @@ private:
      */
     void compress(char const *s);
 };
+
+} // namespace hysortk
 
 #endif

@@ -5,6 +5,8 @@
 #include "dnabuffer.hpp"
 #include "compiletime.h"
 
+namespace hysortk {
+
 class FastaIndex
 {
 public:
@@ -48,5 +50,7 @@ private:
 
     void getpartition(std::vector<MPI_Count_t>& sendcounts);
 };
+
+} // namespace hysortk
 
 #endif

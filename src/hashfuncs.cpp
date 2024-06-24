@@ -1,5 +1,7 @@
 #include "hashfuncs.hpp"
 
+namespace hysortk {
+
 uint32_t rotl32(uint32_t x, int8_t r)
 {
     return (x << r) | (x >> (32 - r));
@@ -248,3 +250,5 @@ uint32_t murmurhash3(const void *key, size_t len, uint32_t seed)
     murmurhash3_x64_128(key, len, seed, (void*)vals);
     return (uint32_t)(vals[0] & ((1ULL<<32)-1));
 }
+
+} // namespace hysortk

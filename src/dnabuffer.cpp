@@ -2,6 +2,8 @@
 #include <cassert>
 #include <sstream>
 
+namespace hysortk {
+
 DnaBuffer::DnaBuffer(size_t bufsize, size_t numreads, uint8_t *buf, const size_t *readlens) : bufhead(0), bufsize(bufsize), buf(buf)
 {
     sequences.reserve(numreads);
@@ -48,3 +50,5 @@ std::string DnaBuffer::getasciifilecontents() const
 
     return ss.str();
 }
+
+} // namespace hysortk

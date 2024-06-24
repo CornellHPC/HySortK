@@ -7,6 +7,7 @@
 #include <memory>
 #include <vector>
 
+namespace hysortk {
 
 class Logger
 {
@@ -27,5 +28,7 @@ public:
     std::string rankstr(int proc);
     static std::string readrangestr(size_t pos, size_t count);
 };
+
+} // namespace hysortk
 
 #endif

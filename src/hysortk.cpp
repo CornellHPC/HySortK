@@ -13,6 +13,8 @@
 #include "memcheck.hpp"
 #include "hysortk.hpp"
 
+namespace hysortk {
+
 std::shared_ptr<DnaBuffer> read_dna_buffer(const std::string& fasta_fname, MPI_Comm comm){
     Timer timer(comm);
     timer.start();
@@ -136,3 +138,5 @@ void write_output_file(const KmerListS& kmerlist, const std::string& output_dir,
     }
 
 }
+
+} // namespace hysortk
