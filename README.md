@@ -17,7 +17,7 @@ You can change the compile time parameters in the makefile or with the `make` co
 For example, use the following command to count $31-mers$ with frequency in [2, 50]
 
 ```sh
-make K=31 M=17 L=2 U=50 LOG=2 -j8
+make standalone K=31 M=17 L=2 U=50 LOG=2 -j8
 ```
 
 For more information on compile time parameters, please refer to the makefile.

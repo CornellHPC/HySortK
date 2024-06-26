@@ -9,7 +9,7 @@ U?=40
 # Extension Information
 EXT?=0
 
-# Log Level (1, 2, 3, 4)
+# Log Level (0, 1, 2, 3, 4)
 LOG?=2
 # Debugging
 D?=0
