@@ -1,6 +1,6 @@
 ## README
 
-HySortK is a high-performance distributed memory K-mer counter. Our paper "High-Performance Sorting-Based K-mer Counting in Distributed Memory with Flexible Hybrid Parallelism" was accepted to ICPP24 and is not available at [https://dl.acm.org/doi/abs/10.1145/3673038.3673072](https://dl.acm.org/doi/abs/10.1145/3673038.3673072).
+HySortK is a high-performance distributed memory K-mer counter. Our paper "High-Performance Sorting-Based K-mer Counting in Distributed Memory with Flexible Hybrid Parallelism" was accepted to ICPP24 and is now available at [https://dl.acm.org/doi/abs/10.1145/3673038.3673072](https://dl.acm.org/doi/abs/10.1145/3673038.3673072).
 
 There're two options for using HySortK: using it as a standalone program or integrating into existing projects.
 
