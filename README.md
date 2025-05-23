@@ -1,6 +1,6 @@
 ## README
 
-HySortK is a high-performance distributed memory K-mer counter. Our paper "High-Performance Sorting-Based K-mer Counting in Distributed Memory with Flexible Hybrid Parallelism" was accepted to ICPP24 and will be available online soon!
+HySortK is a high-performance distributed memory K-mer counter. Our paper "High-Performance Sorting-Based K-mer Counting in Distributed Memory with Flexible Hybrid Parallelism" was accepted to ICPP24 and is not available at [https://dl.acm.org/doi/abs/10.1145/3673038.3673072](https://dl.acm.org/doi/abs/10.1145/3673038.3673072).
 
 There're two options for using HySortK: using it as a standalone program or integrating into existing projects.
 
@@ -87,6 +87,30 @@ YOUR_PROJECT:
 3. When linking your project, include the `libhysortk.o` object file in the `obj` directory.
 
 If your project needs the EXTENSION information, you need to pass `EXT=1` when building HySortK with Make. As part of the code in the header file is controlled by the flags, you also need to define the `EXTENSION` flag when compiling **all related files** in your project, even if it is not part of HySortK. 
+
+### Citation
+
+If you find this repo helpful to your work, please consider citing our article:
+
+```bibtex
+@inproceedings{10.1145/3673038.3673072,
+author = {Li, Yifan and Guidi, Giulia},
+title = {High-Performance Sorting-Based K-mer Counting in Distributed Memory with Flexible Hybrid Parallelism},
+year = {2024},
+isbn = {9798400717932},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/3673038.3673072},
+doi = {10.1145/3673038.3673072},
+abstract = {In generating large quantities of DNA data, high-throughput sequencing technologies require advanced bioinformatics infrastructures for efficient data analysis. k-mer counting, the process of quantifying the frequency of fixed-length k DNA subsequences, is a fundamental step in various bioinformatics pipelines, including genome assembly and protein prediction. Due to the growing volume of data, the scaling of the counting process is critical. In the literature, distributed memory software uses hash tables, which exhibit poor cache friendliness and consume excessive memory. They often also lack support for flexible parallelism, which makes integration into existing bioinformatics pipelines difficult. In this work, we propose HySortK, a highly efficient sorting-based distributed memory k-mer counter. HySortK reduces the communication volume through a carefully designed communication scheme and domain-specific optimization strategies. Furthermore, we introduce an abstract task layer for flexible hybrid parallelism to address load imbalances in different scenarios. HySortK achieves a 2-10 \texttimes{} speedup compared to the GPU baseline on 4 and 8 nodes. Compared to state-of-the-art CPU software, HySortK achieves up to 2 \texttimes{} speedup while reducing peak memory usage by 30\% on 16 nodes. Finally, we integrated HySortK into an existing genome assembly pipeline and achieved up to 1.8 \texttimes{} speedup, proving its flexibility and practicality in real-world scenarios.},
+booktitle = {Proceedings of the 53rd International Conference on Parallel Processing},
+pages = {919–928},
+numpages = {10},
+keywords = {Computational Biology, Distributed Memory, Genome Analysis, Parallel Radix Sort, Performance Analysis, k-mer Counting},
+location = {Gotland, Sweden},
+series = {ICPP '24}
+}
+```
 
 
 ### Copyright
