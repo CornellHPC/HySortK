@@ -68,5 +68,7 @@ int main(int argc, char **argv){
         hysortk::write_output_file(*kmer_list, output_dir, MPI_COMM_WORLD);
     }
 
+    MPI_Finalize();
+
     return 0;
 }
