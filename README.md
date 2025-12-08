@@ -90,7 +90,7 @@ If your project needs the EXTENSION information, you need to pass `EXT=1` when b
 
 ### Citation
 
-If you find this repo helpful to your work, please consider citing our article:
+If you find this repo helpful to your work, please cite our article:
 
 ```bibtex
 @inproceedings{10.1145/3673038.3673072,
